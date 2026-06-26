@@ -618,6 +618,9 @@ const formatCLP = (value: number) =>
 export default function EmpapadosMenuPage() {
   const [cart, setCart] = useState<CartLine[]>([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
+  // Evita pedidos duplicados si el cliente toca el botón más de una vez
+  // (ej. doble-tap en el celular mientras espera que abra WhatsApp).
+  const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
   const [orderType, setOrderType] = useState<"delivery" | "retiro">("retiro");
   const [pickupLocation, setPickupLocation] = useState<
     "lagunillas" | "salvador-allende"
@@ -934,31 +937,39 @@ export default function EmpapadosMenuPage() {
     return `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
   };
 
-  const handleSendOrder = async () => {
-    if (!canSubmit) return;
+  const handleSendOrder = () => {
+    if (!canSubmit || isSubmittingOrder) return;
+    setIsSubmittingOrder(true);
 
-    // Guardamos el pedido en el panel (base de datos) ANTES de abrir
-    // WhatsApp. Si falla (ej. base de datos no conectada todavía), no
-    // bloqueamos al cliente: el pedido se envía igual por WhatsApp.
-    try {
-      await fetch("/api/orders", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          customerName: customerName.trim(),
-          orderType,
-          address: orderType === "delivery" ? address.trim() : null,
-          pickupLocation: orderType === "retiro" ? pickupLocation : null,
-          items: cart,
-          total: totalPrice,
-        }),
-      });
-    } catch {
-      // Silencioso a propósito: el envío por WhatsApp no debe depender del panel.
-    }
-
+    // CRÍTICO para que funcione en navegadores móviles (Safari/Chrome en
+    // celular): window.open debe llamarse de forma SÍNCRONA, en la misma
+    // tarea del click, o el navegador lo bloquea como "popup no solicitado"
+    // porque ya no lo reconoce como gesto directo del usuario. Por eso
+    // abrimos la pestaña primero, ANTES de cualquier await/fetch.
     const url = buildWhatsAppLink();
     window.open(url, "_blank");
+
+    // El guardado en el panel se hace en paralelo, sin bloquear ni
+    // retrasar la apertura de WhatsApp. Si falla (ej. base de datos no
+    // conectada todavía), el cliente ya envió su pedido igual.
+    fetch("/api/orders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        customerName: customerName.trim(),
+        orderType,
+        address: orderType === "delivery" ? address.trim() : null,
+        pickupLocation: orderType === "retiro" ? pickupLocation : null,
+        items: cart,
+        total: totalPrice,
+      }),
+    }).catch(() => {
+      // Silencioso a propósito.
+    });
+
+    // Reabilita el botón después de un momento, por si el cliente necesita
+    // reabrir WhatsApp manualmente (ej. cerró la pestaña sin querer).
+    setTimeout(() => setIsSubmittingOrder(false), 4000);
   };
 
   /* ============================================================================
@@ -1578,14 +1589,14 @@ export default function EmpapadosMenuPage() {
               <div className="px-5 py-4 border-t border-white/5 bg-[#121212]">
                 <button
                   onClick={handleSendOrder}
-                  disabled={!canSubmit}
+                  disabled={!canSubmit || isSubmittingOrder}
                   className={`w-full flex items-center justify-center gap-2 py-4 rounded-2xl font-black uppercase tracking-wide text-sm transition-all ${
-                    canSubmit
+                    canSubmit && !isSubmittingOrder
                       ? "bg-[#FF00C8] text-white shadow-[0_0_30px_rgba(255,0,200,0.7)] active:scale-[0.98]"
                       : "bg-white/10 text-gray-500 cursor-not-allowed"
                   }`}
                 >
-                  Enviar Pedido por WhatsApp
+                  {isSubmittingOrder ? "Enviando..." : "Enviar Pedido por WhatsApp"}
                   <ChevronRight size={18} strokeWidth={3} />
                 </button>
                 {!canSubmit && (

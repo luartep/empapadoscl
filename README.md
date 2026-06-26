@@ -79,10 +79,36 @@ Después de agregarlas, vuelve a hacer Redeploy para que tomen efecto.
 
 ## El panel de administración (`/admin`)
 
-Accede desde `tu-sitio.vercel.app/admin`. Pide usuario y clave, y una vez dentro tiene dos secciones:
+Accede desde `tu-sitio.vercel.app/admin`. Pide usuario y clave (`gino` / `gino123` por defecto), y una vez dentro tiene:
 
 - **Productos:** lista todos los productos por categoría. Puedes editar nombre, descripción, precio, categoría, imagen y la restricción de Salvador Allende; crear productos nuevos; o eliminarlos. (Los grupos de modificadores — proteínas, salsas, etc. — de los productos ya armados se mantienen al editar; agregar/cambiar esos grupos desde el panel no está incluido en esta versión.)
-- **Pedidos:** lista los pedidos que los clientes envían desde el menú (se guardan automáticamente al hacer click en "Enviar Pedido por WhatsApp", además de abrirse WhatsApp). Puedes marcarlos como completados, y filtrar por pendiente/completado/todos. Se actualiza solo cada 30 segundos.
+- **Pedidos:** lista los pedidos que los clientes envían desde el menú (se guardan automáticamente al hacer click en "Enviar Pedido por WhatsApp", además de abrirse WhatsApp). Puedes marcarlos como completados, eliminarlos, filtrar por estado y por sucursal, y asignar/reasignar a qué sucursal corresponde cada pedido (útil sobre todo para delivery, que no llega pre-asignado). Se actualiza solo cada 30 segundos.
+- **Caja (`/admin/cash`):** gestión financiera por sucursal — abrir/cerrar turno, registrar ventas de mostrador y movimientos de caja manuales (ingresos/egresos que no son ventas), y hacer el arqueo al cerrar el turno (normal o ciego) en efectivo, tarjeta y transferencia por separado.
+
+---
+
+## Migración 2 — Gestión multisucursal y financiera
+
+Si ya tenías la base de datos conectada desde antes (schema.sql + seed.sql), necesitas correr **una migración adicional** para habilitar sucursales, turnos de caja, movimientos y arqueo. Es el mismo procedimiento de siempre:
+
+1. Abre el SQL Editor de tu base de datos (Neon).
+2. Pega el contenido completo de `db/schema_v2.sql` y ejecútalo.
+
+Esto crea las sucursales Lagunillas y Salvador Allende, las tablas de turnos/movimientos/ventas, y agrega la columna `branch_id` a los pedidos existentes (sin tocar ni borrar nada de lo que ya tenías).
+
+### Cómo funciona la caja
+
+- **Una caja por sucursal:** solo puede haber un turno abierto a la vez por sucursal; el sistema lo impide automáticamente si intentas abrir dos.
+- **Monto esperado:** al cerrar el turno, el sistema calcula automáticamente cuánto debería haber en efectivo/tarjeta/transferencia (monto inicial + ventas del turno + movimientos manuales), y lo compara contra lo que el cajero cuenta físicamente.
+- **Arqueo normal:** el cajero ve el monto esperado mientras cuenta.
+- **Arqueo ciego:** el cajero cuenta y confirma su número antes de ver el esperado; la diferencia se revela recién después, para no sesgar el conteo.
+- Las ventas web/WhatsApp **no** se suman automáticamente al efectivo esperado de la caja física (se asume que no pasan por esa caja); el arqueo se basa en lo que el cajero registra manualmente como venta de mostrador durante su turno.
+
+---
+
+## Corrección: botón de WhatsApp en celulares
+
+El botón "Enviar Pedido por WhatsApp" ahora abre la conversación de forma inmediata al hacer click (antes esperaba a guardar el pedido primero, lo cual algunos navegadores de celular bloquean como "ventana emergente no solicitada" al perder el gesto directo del usuario). El guardado en el panel ocurre en paralelo, sin retrasar ni depender de la apertura de WhatsApp. También se bloquea el botón mientras se procesa el envío, para evitar pedidos duplicados si se toca más de una vez.
 
 ---
 

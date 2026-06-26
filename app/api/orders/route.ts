@@ -23,11 +23,16 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // Si el pedido se retira en una sucursal específica, lo pre-asignamos
+  // directamente a esa sucursal. Si es delivery, queda sin asignar hasta
+  // que el admin lo asigne manualmente desde el panel.
+  const branchId = orderType === "retiro" ? pickupLocation : null;
+
   try {
     const db = sql();
     const result = await db.query(
-      `INSERT INTO orders (customer_name, order_type, address, pickup_location, items, total)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO orders (customer_name, order_type, address, pickup_location, items, total, branch_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id`,
       [
         customerName,
@@ -36,6 +41,7 @@ export async function POST(request: NextRequest) {
         pickupLocation,
         JSON.stringify(items),
         total,
+        branchId,
       ]
     );
     const id = (result[0] as { id: number }).id;
@@ -52,16 +58,22 @@ export async function POST(request: NextRequest) {
 }
 
 // GET /api/orders — protegido. Lista los pedidos para el panel.
-export async function GET() {
+// Acepta ?branchId= para filtrar por sucursal (admin viendo una sola sucursal).
+export async function GET(request: NextRequest) {
   if (!(await getSessionFromCookies())) {
     return NextResponse.json({ error: "No autorizado." }, { status: 401 });
   }
 
+  const branchId = request.nextUrl.searchParams.get("branchId");
+
   try {
     const db = sql();
-    const orders = await db.query(
-      `SELECT * FROM orders ORDER BY created_at DESC LIMIT 200`
-    );
+    const orders = branchId
+      ? await db.query(
+          `SELECT * FROM orders WHERE branch_id = $1 ORDER BY created_at DESC LIMIT 200`,
+          [branchId]
+        )
+      : await db.query(`SELECT * FROM orders ORDER BY created_at DESC LIMIT 200`);
     return NextResponse.json({ orders });
   } catch (err) {
     console.error(err);
@@ -72,30 +84,76 @@ export async function GET() {
   }
 }
 
-// PATCH /api/orders — protegido. Cambia el estado de un pedido (pendiente/completado).
+// PATCH /api/orders — protegido. Cambia el estado (pendiente/completado)
+// y/o reasigna la sucursal de un pedido.
 export async function PATCH(request: NextRequest) {
   if (!(await getSessionFromCookies())) {
     return NextResponse.json({ error: "No autorizado." }, { status: 401 });
   }
 
   const body = await request.json();
-  const { id, status } = body;
+  const { id, status, branchId } = body;
 
-  if (!id || !status) {
+  if (!id) {
+    return NextResponse.json({ error: "Falta el id." }, { status: 400 });
+  }
+  if (status == null && branchId === undefined) {
     return NextResponse.json(
-      { error: "Faltan campos (id, status)." },
+      { error: "Nada que actualizar (status o branchId)." },
       { status: 400 }
     );
   }
 
   try {
     const db = sql();
-    await db.query(`UPDATE orders SET status = $2 WHERE id = $1`, [id, status]);
+    if (status != null && branchId !== undefined) {
+      await db.query(
+        `UPDATE orders SET status = $2, branch_id = $3 WHERE id = $1`,
+        [id, status, branchId]
+      );
+    } else if (status != null) {
+      await db.query(`UPDATE orders SET status = $2 WHERE id = $1`, [
+        id,
+        status,
+      ]);
+    } else {
+      await db.query(`UPDATE orders SET branch_id = $2 WHERE id = $1`, [
+        id,
+        branchId,
+      ]);
+    }
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error(err);
     return NextResponse.json(
       { error: "No se pudo actualizar el pedido." },
+      { status: 500 }
+    );
+  }
+}
+
+// DELETE /api/orders?id=... — protegido. Elimina un pedido permanentemente.
+export async function DELETE(request: NextRequest) {
+  if (!(await getSessionFromCookies())) {
+    return NextResponse.json({ error: "No autorizado." }, { status: 401 });
+  }
+
+  const id = request.nextUrl.searchParams.get("id");
+  if (!id) {
+    return NextResponse.json(
+      { error: "Falta el id del pedido a eliminar." },
+      { status: 400 }
+    );
+  }
+
+  try {
+    const db = sql();
+    await db.query(`DELETE FROM orders WHERE id = $1`, [id]);
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    return NextResponse.json(
+      { error: "No se pudo eliminar el pedido." },
       { status: 500 }
     );
   }

@@ -11,6 +11,7 @@ import {
   Check,
   Package,
   ClipboardList,
+  Wallet,
   Loader2,
 } from "lucide-react";
 
@@ -48,6 +49,7 @@ type Order = {
   order_type: "delivery" | "retiro";
   address: string | null;
   pickup_location: string | null;
+  branch_id: string | null;
   items: {
     item: { name: string };
     qty: number;
@@ -59,6 +61,8 @@ type Order = {
   status: "pendiente" | "completado";
   created_at: string;
 };
+
+type Branch = { id: string; name: string };
 
 const formatCLP = (value: number) =>
   new Intl.NumberFormat("es-CL", { maximumFractionDigits: 0 }).format(value);
@@ -108,6 +112,12 @@ export default function AdminPanelPage() {
             }`}
           >
             <ClipboardList size={14} /> Pedidos
+          </button>
+          <button
+            onClick={() => router.push("/admin/cash")}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-bold uppercase bg-white/5 text-gray-400 hover:text-white transition-colors"
+          >
+            <Wallet size={14} /> Caja
           </button>
         </div>
       </header>
@@ -516,6 +526,8 @@ function OrdersTab() {
   const [filter, setFilter] = useState<"todos" | "pendiente" | "completado">(
     "pendiente"
   );
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [branchFilter, setBranchFilter] = useState<string>("todas");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -537,6 +549,10 @@ function OrdersTab() {
 
   useEffect(() => {
     load();
+    fetch("/api/branches")
+      .then((res) => res.json())
+      .then((data) => setBranches(data.branches || []))
+      .catch(() => {});
     // Refresca automáticamente cada 30 segundos para ver pedidos nuevos sin recargar.
     const interval = setInterval(load, 30000);
     return () => clearInterval(interval);
@@ -552,6 +568,35 @@ function OrdersTab() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: order.id, status: newStatus }),
     });
+  };
+
+  const assignBranch = async (order: Order, branchId: string) => {
+    setOrders((prev) =>
+      prev.map((o) => (o.id === order.id ? { ...o, branch_id: branchId } : o))
+    );
+    await fetch("/api/orders", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: order.id, branchId }),
+    });
+  };
+
+  const deleteOrder = async (order: Order) => {
+    if (
+      !confirm(
+        `¿Eliminar el pedido de ${order.customer_name}? Esta acción no se puede deshacer.`
+      )
+    ) {
+      return;
+    }
+    setOrders((prev) => prev.filter((o) => o.id !== order.id));
+    const res = await fetch(`/api/orders?id=${order.id}`, {
+      method: "DELETE",
+    });
+    if (!res.ok) {
+      alert("No se pudo eliminar el pedido. Intenta de nuevo.");
+      load();
+    }
   };
 
   if (loading) {
@@ -570,13 +615,20 @@ function OrdersTab() {
     );
   }
 
-  const filtered = orders.filter((o) =>
-    filter === "todos" ? true : o.status === filter
-  );
+  const filtered = orders.filter((o) => {
+    const statusOk = filter === "todos" ? true : o.status === filter;
+    const branchOk =
+      branchFilter === "todas"
+        ? true
+        : branchFilter === "sin-asignar"
+        ? !o.branch_id
+        : o.branch_id === branchFilter;
+    return statusOk && branchOk;
+  });
 
   return (
     <div>
-      <div className="flex gap-2 mb-5">
+      <div className="flex gap-2 mb-3 flex-wrap">
         {(["pendiente", "completado", "todos"] as const).map((f) => (
           <button
             key={f}
@@ -590,6 +642,42 @@ function OrdersTab() {
             {f}
           </button>
         ))}
+      </div>
+
+      <div className="flex gap-2 mb-5 flex-wrap">
+        <button
+          onClick={() => setBranchFilter("todas")}
+          className={`px-3 py-1.5 rounded-full text-[11px] font-bold uppercase transition-colors ${
+            branchFilter === "todas"
+              ? "bg-white/15 text-white"
+              : "bg-white/5 text-gray-500"
+          }`}
+        >
+          Todas las sucursales
+        </button>
+        {branches.map((b) => (
+          <button
+            key={b.id}
+            onClick={() => setBranchFilter(b.id)}
+            className={`px-3 py-1.5 rounded-full text-[11px] font-bold uppercase transition-colors ${
+              branchFilter === b.id
+                ? "bg-white/15 text-white"
+                : "bg-white/5 text-gray-500"
+            }`}
+          >
+            {b.name}
+          </button>
+        ))}
+        <button
+          onClick={() => setBranchFilter("sin-asignar")}
+          className={`px-3 py-1.5 rounded-full text-[11px] font-bold uppercase transition-colors ${
+            branchFilter === "sin-asignar"
+              ? "bg-[#FF8A00]/20 text-[#FF8A00]"
+              : "bg-white/5 text-gray-500"
+          }`}
+        >
+          Sin asignar
+        </button>
       </div>
 
       {filtered.length === 0 ? (
@@ -610,18 +698,27 @@ function OrdersTab() {
                     {new Date(order.created_at).toLocaleString("es-CL")}
                   </p>
                 </div>
-                <button
-                  onClick={() => toggleStatus(order)}
-                  className={`text-[11px] font-bold uppercase px-3 py-1.5 rounded-full whitespace-nowrap transition-colors ${
-                    order.status === "completado"
-                      ? "bg-[#2ECC71]/15 text-[#2ECC71]"
-                      : "bg-[#FFEA00]/15 text-[#FFEA00]"
-                  }`}
-                >
-                  {order.status === "completado"
-                    ? "✓ Completado"
-                    : "Marcar completado"}
-                </button>
+                <div className="flex items-center gap-1.5 flex-shrink-0">
+                  <button
+                    onClick={() => toggleStatus(order)}
+                    className={`text-[11px] font-bold uppercase px-3 py-1.5 rounded-full whitespace-nowrap transition-colors ${
+                      order.status === "completado"
+                        ? "bg-[#2ECC71]/15 text-[#2ECC71]"
+                        : "bg-[#FFEA00]/15 text-[#FFEA00]"
+                    }`}
+                  >
+                    {order.status === "completado"
+                      ? "✓ Completado"
+                      : "Marcar completado"}
+                  </button>
+                  <button
+                    onClick={() => deleteOrder(order)}
+                    aria-label="Eliminar pedido"
+                    className="p-1.5 rounded-full bg-white/5 hover:bg-red-500/20 hover:text-red-400 transition-colors"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
               </div>
 
               <p className="text-xs text-gray-400 mb-2">
@@ -633,6 +730,28 @@ function OrdersTab() {
                         : "Lagunillas"
                     }`}
               </p>
+
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-[10px] font-bold uppercase text-gray-500">
+                  Sucursal asignada:
+                </span>
+                <select
+                  value={order.branch_id ?? ""}
+                  onChange={(e) => assignBranch(order, e.target.value)}
+                  className={`text-[11px] font-bold rounded-full px-2.5 py-1 border focus:outline-none ${
+                    order.branch_id
+                      ? "bg-white/10 border-white/20 text-white"
+                      : "bg-[#FF8A00]/10 border-[#FF8A00]/30 text-[#FF8A00]"
+                  }`}
+                >
+                  <option value="">Sin asignar</option>
+                  {branches.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
               <div className="border-t border-white/5 pt-2 space-y-1.5">
                 {order.items.map((line, idx) => (
