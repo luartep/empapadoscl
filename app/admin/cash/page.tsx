@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { printDailySummary } from "@/lib/printing";
 import {
   LogOut,
   ArrowLeft,
@@ -14,6 +15,7 @@ import {
   Trash2,
   Loader2,
   CheckCircle2,
+  Printer,
 } from "lucide-react";
 
 /* ============================================================================
@@ -247,6 +249,11 @@ export default function CashManagementPage() {
 
             <ShiftSummaryCard
               shift={shift}
+              branchName={
+                branches.find((b) => b.id === selectedBranch)?.name ?? ""
+              }
+              sales={sales}
+              movements={movements}
               liveExpectedCash={liveExpectedCash}
               liveExpectedCard={liveExpectedCard}
               liveExpectedTransfer={liveExpectedTransfer}
@@ -378,6 +385,9 @@ function OpenShiftCard({
 
 function ShiftSummaryCard({
   shift,
+  branchName,
+  sales,
+  movements,
   liveExpectedCash,
   liveExpectedCard,
   liveExpectedTransfer,
@@ -385,12 +395,45 @@ function ShiftSummaryCard({
   onRequestClose,
 }: {
   shift: Shift;
+  branchName: string;
+  sales: ManualSale[];
+  movements: CashMovement[];
   liveExpectedCash: number;
   liveExpectedCard: number;
   liveExpectedTransfer: number;
   salesTotal: number;
   onRequestClose: () => void;
 }) {
+  const handlePrintSummary = () => {
+    const salesByMethod = PAYMENT_METHODS.map((m) => {
+      const matching = sales.filter((s) => s.payment_method === m.id);
+      return {
+        method: m.label,
+        total: matching.reduce((sum, s) => sum + s.amount, 0),
+        count: matching.length,
+      };
+    }).filter((m) => m.count > 0);
+
+    const movementsIn = movements
+      .filter((m) => m.type === "ingreso")
+      .reduce((sum, m) => sum + m.amount, 0);
+    const movementsOut = movements
+      .filter((m) => m.type === "egreso")
+      .reduce((sum, m) => sum + m.amount, 0);
+
+    printDailySummary({
+      branchName,
+      dateLabel: new Date(shift.opened_at).toLocaleDateString("es-CL"),
+      totalSales: salesTotal,
+      salesByMethod,
+      movementsIn,
+      movementsOut,
+      openingCash: shift.opening_cash,
+      expectedCash: liveExpectedCash,
+      ordersCount: sales.length,
+    });
+  };
+
   return (
     <div className="bg-[#161616] border border-white/5 rounded-2xl p-5 mb-6">
       <div className="flex items-center justify-between mb-4">
@@ -403,12 +446,21 @@ function ShiftSummaryCard({
             Desde {new Date(shift.opened_at).toLocaleString("es-CL")}
           </p>
         </div>
-        <button
-          onClick={onRequestClose}
-          className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[#FF8A00]/15 text-[#FF8A00] text-xs font-bold uppercase"
-        >
-          <Lock size={13} /> Cerrar Turno
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handlePrintSummary}
+            className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-white/5 text-gray-300 text-xs font-bold uppercase"
+            title="Imprimir resumen de ventas"
+          >
+            <Printer size={13} />
+          </button>
+          <button
+            onClick={onRequestClose}
+            className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[#FF8A00]/15 text-[#FF8A00] text-xs font-bold uppercase"
+          >
+            <Lock size={13} /> Cerrar Turno
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-3 gap-2">

@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { printComanda } from "@/lib/printing";
 import {
   LogOut,
   Plus,
@@ -13,6 +14,8 @@ import {
   ClipboardList,
   Wallet,
   Loader2,
+  Printer,
+  CheckCircle2,
 } from "lucide-react";
 
 /* ============================================================================
@@ -59,10 +62,25 @@ type Order = {
   }[];
   total: number;
   status: "pendiente" | "completado";
+  prep_status: "en_preparacion" | "en_reparto" | "entregado";
+  payment_status: "pendiente" | "pagado";
+  payment_method: "efectivo" | "tarjeta" | "transferencia" | null;
   created_at: string;
 };
 
 type Branch = { id: string; name: string };
+
+const PREP_STATUSES = [
+  { id: "en_preparacion", label: "En Preparación", color: "#FFEA00" },
+  { id: "en_reparto", label: "En Reparto", color: "#3B9DFF" },
+  { id: "entregado", label: "Entregado", color: "#2ECC71" },
+] as const;
+
+const PAYMENT_METHODS = [
+  { id: "efectivo", label: "Efectivo" },
+  { id: "tarjeta", label: "Tarjeta" },
+  { id: "transferencia", label: "Transferencia" },
+] as const;
 
 const formatCLP = (value: number) =>
   new Intl.NumberFormat("es-CL", { maximumFractionDigits: 0 }).format(value);
@@ -310,8 +328,66 @@ function ProductEditorModal({
   const [restricted, setRestricted] = useState(
     product?.restrictedToSalvadorAllende ?? false
   );
+  const [modifierGroups, setModifierGroups] = useState<ModifierGroup[]>(
+    product?.modifierGroups ? JSON.parse(JSON.stringify(product.modifierGroups)) : []
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const updateGroup = (groupIndex: number, patch: Partial<ModifierGroup>) => {
+    setModifierGroups((prev) =>
+      prev.map((g, i) => (i === groupIndex ? { ...g, ...patch } : g))
+    );
+  };
+
+  const updateOption = (
+    groupIndex: number,
+    optionIndex: number,
+    patch: Partial<{ name: string; price: number }>
+  ) => {
+    setModifierGroups((prev) =>
+      prev.map((g, i) =>
+        i === groupIndex
+          ? {
+              ...g,
+              options: g.options.map((o, j) =>
+                j === optionIndex ? { ...o, ...patch } : o
+              ),
+            }
+          : g
+      )
+    );
+  };
+
+  const addOption = (groupIndex: number) => {
+    setModifierGroups((prev) =>
+      prev.map((g, i) =>
+        i === groupIndex
+          ? {
+              ...g,
+              options: [
+                ...g.options,
+                {
+                  id: `opt-${Date.now()}`,
+                  name: "Nueva opción",
+                  price: 0,
+                },
+              ],
+            }
+          : g
+      )
+    );
+  };
+
+  const removeOption = (groupIndex: number, optionIndex: number) => {
+    setModifierGroups((prev) =>
+      prev.map((g, i) =>
+        i === groupIndex
+          ? { ...g, options: g.options.filter((_, j) => j !== optionIndex) }
+          : g
+      )
+    );
+  };
 
   const handleSave = async () => {
     setError(null);
@@ -330,7 +406,7 @@ function ProductEditorModal({
       image: image.trim() || null,
       allowsExtras,
       restrictedToSalvadorAllende: restricted,
-      modifierGroups: product?.modifierGroups ?? [],
+      modifierGroups,
     };
 
     try {
@@ -480,13 +556,90 @@ function ProductEditorModal({
             </span>
           </label>
 
-          {!isNew && product?.modifierGroups?.length > 0 && (
-            <p className="text-[11px] text-gray-500 bg-white/5 rounded-lg px-3 py-2">
-              Este producto tiene {product.modifierGroups.length} grupo
-              {product.modifierGroups.length !== 1 ? "s" : ""} de
-              modificadores (proteínas, salsas, etc.) que se mantienen sin
-              cambios al guardar.
-            </p>
+          {modifierGroups.length > 0 && (
+            <div className="space-y-4 pt-2 border-t border-white/5">
+              <p className="text-[11px] font-bold uppercase text-gray-400">
+                Grupos de selección (proteínas, salsas, toques frescos,
+                adicionales, etc.)
+              </p>
+              {modifierGroups.map((group, gIdx) => (
+                <div
+                  key={group.id}
+                  className="bg-[#1A1A1A] border border-white/10 rounded-xl p-3"
+                >
+                  <div className="flex items-center gap-2 mb-2">
+                    <input
+                      value={group.label}
+                      onChange={(e) =>
+                        updateGroup(gIdx, { label: e.target.value })
+                      }
+                      className="flex-1 bg-[#0A0A0A] border border-white/10 rounded-lg px-2.5 py-1.5 text-xs font-bold focus:outline-none focus:border-[#FF00C8]"
+                    />
+                    {group.required > 0 && (
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <span className="text-[10px] text-gray-500">
+                          Incluye
+                        </span>
+                        <input
+                          type="number"
+                          value={group.required}
+                          onChange={(e) =>
+                            updateGroup(gIdx, {
+                              required: Number(e.target.value) || 0,
+                            })
+                          }
+                          className="w-12 bg-[#0A0A0A] border border-white/10 rounded-lg px-1.5 py-1.5 text-xs text-center focus:outline-none focus:border-[#FF00C8]"
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="space-y-1.5">
+                    {group.options.map((opt, oIdx) => (
+                      <div key={opt.id} className="flex items-center gap-1.5">
+                        <input
+                          value={opt.name}
+                          onChange={(e) =>
+                            updateOption(gIdx, oIdx, { name: e.target.value })
+                          }
+                          className="flex-1 bg-[#0A0A0A] border border-white/10 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:border-[#FF00C8]"
+                        />
+                        <input
+                          type="number"
+                          value={opt.price}
+                          onChange={(e) =>
+                            updateOption(gIdx, oIdx, {
+                              price: Number(e.target.value) || 0,
+                            })
+                          }
+                          placeholder="$0"
+                          className="w-20 bg-[#0A0A0A] border border-white/10 rounded-lg px-2 py-1.5 text-xs text-right focus:outline-none focus:border-[#FF00C8]"
+                        />
+                        <button
+                          onClick={() => removeOption(gIdx, oIdx)}
+                          className="p-1.5 rounded-lg text-gray-500 hover:text-red-400 hover:bg-red-500/10 flex-shrink-0"
+                          aria-label="Quitar opción"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  <button
+                    onClick={() => addOption(gIdx)}
+                    className="mt-2 flex items-center gap-1 text-[11px] font-bold text-[#FF00C8] uppercase"
+                  >
+                    <Plus size={12} /> Agregar opción
+                  </button>
+                </div>
+              ))}
+              <p className="text-[10px] text-gray-500">
+                El precio de cada opción es el recargo que se suma al
+                producto (déjalo en $0 si la opción va incluida sin costo
+                extra, como las proteínas y salsas base).
+              </p>
+            </div>
           )}
 
           {error && (
@@ -523,9 +676,9 @@ function OrdersTab() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useState<"todos" | "pendiente" | "completado">(
-    "pendiente"
-  );
+  const [filter, setFilter] = useState<
+    "todos" | "en_preparacion" | "en_reparto" | "entregado"
+  >("en_preparacion");
   const [branches, setBranches] = useState<Branch[]>([]);
   const [branchFilter, setBranchFilter] = useState<string>("todas");
 
@@ -558,15 +711,58 @@ function OrdersTab() {
     return () => clearInterval(interval);
   }, [load]);
 
-  const toggleStatus = async (order: Order) => {
-    const newStatus = order.status === "pendiente" ? "completado" : "pendiente";
+  const setPrepStatus = async (order: Order, prepStatus: string) => {
     setOrders((prev) =>
-      prev.map((o) => (o.id === order.id ? { ...o, status: newStatus } : o))
+      prev.map((o) =>
+        o.id === order.id ? { ...o, prep_status: prepStatus as any } : o
+      )
     );
     await fetch("/api/orders", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: order.id, status: newStatus }),
+      body: JSON.stringify({ id: order.id, prepStatus }),
+    });
+  };
+
+  const markPaid = async (order: Order, paymentMethod: string) => {
+    const res = await fetch("/api/orders", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: order.id, markPaid: { paymentMethod } }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      alert(data.error || "No se pudo marcar como pagado.");
+      return;
+    }
+    setOrders((prev) =>
+      prev.map((o) =>
+        o.id === order.id
+          ? {
+              ...o,
+              payment_status: "pagado",
+              payment_method: paymentMethod as any,
+            }
+          : o
+      )
+    );
+  };
+
+  const unmarkPaid = async (order: Order) => {
+    if (!confirm("¿Revertir el pago de este pedido? Se quitará la venta de la caja.")) {
+      return;
+    }
+    setOrders((prev) =>
+      prev.map((o) =>
+        o.id === order.id
+          ? { ...o, payment_status: "pendiente", payment_method: null }
+          : o
+      )
+    );
+    await fetch("/api/orders", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: order.id, unmarkPaid: true }),
     });
   };
 
@@ -616,7 +812,7 @@ function OrdersTab() {
   }
 
   const filtered = orders.filter((o) => {
-    const statusOk = filter === "todos" ? true : o.status === filter;
+    const statusOk = filter === "todos" ? true : o.prep_status === filter;
     const branchOk =
       branchFilter === "todas"
         ? true
@@ -629,17 +825,24 @@ function OrdersTab() {
   return (
     <div>
       <div className="flex gap-2 mb-3 flex-wrap">
-        {(["pendiente", "completado", "todos"] as const).map((f) => (
+        {(
+          [
+            { id: "en_preparacion", label: "En Preparación" },
+            { id: "en_reparto", label: "En Reparto" },
+            { id: "entregado", label: "Entregado" },
+            { id: "todos", label: "Todos" },
+          ] as const
+        ).map((f) => (
           <button
-            key={f}
-            onClick={() => setFilter(f)}
+            key={f.id}
+            onClick={() => setFilter(f.id)}
             className={`px-4 py-2 rounded-full text-xs font-bold uppercase transition-colors ${
-              filter === f
+              filter === f.id
                 ? "bg-[#FF00C8] text-white"
                 : "bg-white/5 text-gray-400"
             }`}
           >
-            {f}
+            {f.label}
           </button>
         ))}
       </div>
@@ -691,7 +894,7 @@ function OrdersTab() {
               key={order.id}
               className="bg-[#161616] border border-white/5 rounded-xl p-4"
             >
-              <div className="flex items-start justify-between gap-3 mb-2">
+              <div className="flex items-start justify-between gap-3 mb-3">
                 <div>
                   <p className="font-bold text-sm">{order.customer_name}</p>
                   <p className="text-xs text-gray-500">
@@ -700,16 +903,12 @@ function OrdersTab() {
                 </div>
                 <div className="flex items-center gap-1.5 flex-shrink-0">
                   <button
-                    onClick={() => toggleStatus(order)}
-                    className={`text-[11px] font-bold uppercase px-3 py-1.5 rounded-full whitespace-nowrap transition-colors ${
-                      order.status === "completado"
-                        ? "bg-[#2ECC71]/15 text-[#2ECC71]"
-                        : "bg-[#FFEA00]/15 text-[#FFEA00]"
-                    }`}
+                    onClick={() => printComanda(order, branches)}
+                    aria-label="Imprimir comanda"
+                    className="p-1.5 rounded-full bg-white/5 hover:bg-white/15 transition-colors"
+                    title="Imprimir comanda"
                   >
-                    {order.status === "completado"
-                      ? "✓ Completado"
-                      : "Marcar completado"}
+                    <Printer size={13} />
                   </button>
                   <button
                     onClick={() => deleteOrder(order)}
@@ -719,6 +918,32 @@ function OrdersTab() {
                     <Trash2 size={13} />
                   </button>
                 </div>
+              </div>
+
+              {/* --- Estado de preparación --- */}
+              <div className="flex gap-1.5 mb-3 flex-wrap">
+                {PREP_STATUSES.map((s) => (
+                  <button
+                    key={s.id}
+                    onClick={() => setPrepStatus(order, s.id)}
+                    className="text-[10px] font-bold uppercase px-2.5 py-1.5 rounded-full whitespace-nowrap transition-colors"
+                    style={
+                      order.prep_status === s.id
+                        ? {
+                            backgroundColor: `${s.color}26`,
+                            color: s.color,
+                            border: `1px solid ${s.color}66`,
+                          }
+                        : {
+                            backgroundColor: "rgba(255,255,255,0.04)",
+                            color: "#666",
+                            border: "1px solid transparent",
+                          }
+                    }
+                  >
+                    {s.label}
+                  </button>
+                ))}
               </div>
 
               <p className="text-xs text-gray-400 mb-2">
@@ -731,7 +956,7 @@ function OrdersTab() {
                     }`}
               </p>
 
-              <div className="flex items-center gap-2 mb-2">
+              <div className="flex items-center gap-2 mb-3">
                 <span className="text-[10px] font-bold uppercase text-gray-500">
                   Sucursal asignada:
                 </span>
@@ -781,6 +1006,41 @@ function OrdersTab() {
                 <span className="font-black text-[#FFEA00]">
                   ${formatCLP(order.total)}
                 </span>
+              </div>
+
+              {/* --- Pago / Pasar a Caja --- */}
+              <div className="mt-3 pt-3 border-t border-white/5">
+                {order.payment_status === "pagado" ? (
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold uppercase text-[#2ECC71] flex items-center gap-1.5">
+                      <CheckCircle2 size={13} /> Pagado (
+                      {order.payment_method})
+                    </span>
+                    <button
+                      onClick={() => unmarkPaid(order)}
+                      className="text-[10px] text-gray-500 hover:text-[#FF8A00] underline"
+                    >
+                      Revertir
+                    </button>
+                  </div>
+                ) : (
+                  <div>
+                    <p className="text-[10px] font-bold uppercase text-gray-500 mb-1.5">
+                      Marcar pagado y pasar a caja:
+                    </p>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {PAYMENT_METHODS.map((m) => (
+                        <button
+                          key={m.id}
+                          onClick={() => markPaid(order, m.id)}
+                          className="text-[11px] font-bold uppercase py-2 rounded-lg bg-white/5 hover:bg-[#FF00C8]/20 hover:text-[#FF00C8] transition-colors"
+                        >
+                          {m.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           ))}

@@ -1445,7 +1445,7 @@ export default function EmpapadosMenuPage() {
                             updateLineNote(line.lineId, e.target.value)
                           }
                           placeholder="Nota para este producto (ej: sin cebolla)"
-                          className="w-full bg-[#0A0A0A] border border-white/10 rounded-lg px-3 py-1.5 text-[11px] text-white placeholder:text-gray-600 focus:outline-none focus:border-[#FF00C8] transition-colors"
+                          className="w-full bg-[#0A0A0A] border border-white/10 rounded-lg px-3 py-1.5 text-base text-white placeholder:text-gray-600 placeholder:text-[11px] focus:outline-none focus:border-[#FF00C8] transition-colors"
                         />
                       </div>
                     </div>

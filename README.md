@@ -131,3 +131,48 @@ Cada Box/Cono indica cuántas opciones incluye gratis (ej. "Elige 2 Salsas"). El
 ## Notas por producto
 
 En el modal de personalización (o directamente en el carrito para productos simples como bebidas) hay un campo de "Nota" opcional por producto, para pedidos especiales (ej. "sin cebolla"). Esa nota viaja tanto al mensaje de WhatsApp como al detalle del pedido en el panel.
+
+---
+
+## Migración 3 — Estados de pago/preparación, pasar pedidos a caja
+
+Para habilitar lo más reciente (marcar pedidos como pagados y que se reflejen en caja, estados de preparación, edición de modificadores), corre **una migración más**:
+
+1. Abre el SQL Editor de tu base de datos (Neon).
+2. Pega el contenido completo de `db/schema_v3.sql` y ejecútalo.
+
+Esto agrega los campos de estado de pago/preparación a los pedidos existentes, sin borrar ni tocar nada de lo que ya tenías.
+
+### Estado de preparación
+
+Cada pedido pasa por: **En Preparación → En Reparto → Entregado**. Se cambia con un click desde la pestaña Pedidos, independiente del estado de pago.
+
+### Marcar como pagado → pasa a caja automáticamente
+
+Cada pedido tiene 3 botones (Efectivo / Tarjeta / Transferencia). Al marcar uno:
+- El pedido queda como "Pagado" con ese medio de pago.
+- Se crea automáticamente una venta en el turno de caja **abierto** de la sucursal asignada al pedido — por eso es importante asignar la sucursal antes de marcar como pagado (si el pedido llegó por delivery sin sucursal asignada, el sistema te lo va a pedir).
+- Si no hay un turno abierto en esa sucursal, el sistema avisa que primero hay que abrir turno en `/admin/cash`.
+- Se puede revertir ("Revertir" junto al estado pagado), lo que también quita la venta de la caja para no dejar montos fantasma en el arqueo.
+
+### Editor de modificadores (proteínas, salsas, toques frescos, adicionales)
+
+Al editar un producto desde el panel, ahora aparece cada grupo de selección (ej. "Elige 2 Salsas", "Adicionales") con sus opciones. Para cada opción puedes:
+- Cambiar su **nombre**.
+- Cambiar su **precio** (déjalo en $0 si va incluida sin costo extra).
+- **Eliminarla** con el ícono de basurero.
+- **Agregar opciones nuevas** al grupo con el botón "Agregar opción".
+
+También puedes cambiar cuántas unidades incluye el grupo sin costo (el número junto a "Incluye").
+
+### Impresión (comanda y resumen de ventas)
+
+Pensada para impresora térmica POS (formato angosto de 80mm, fuente monoespaciada):
+- **Comanda por pedido:** ícono de impresora en cada tarjeta de pedido (pestaña Pedidos). Imprime cliente, hora, modalidad, productos con sus selecciones/notas, y total.
+- **Resumen de ventas del día:** ícono de impresora en `/admin/cash`, junto al turno abierto. Imprime el total vendido, desglose por medio de pago, movimientos de caja, y el efectivo esperado.
+
+Ambos abren una ventana nueva y llaman a imprimir automáticamente; usa la impresora térmica configurada como predeterminada en el sistema operativo del computador/tablet donde esté abierto el panel (no requiere ningún driver ni configuración adicional de parte de la app).
+
+### Corrección de zoom en celular
+
+Se fijó el viewport de la página (`width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no`) para que no se pueda hacer zoom ni con gestos ni automáticamente al tocar un campo de texto — la página se ve "tal cual carga", sin que el usuario pueda desajustar el zoom por accidente.
