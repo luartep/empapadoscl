@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { printDailySummary } from "@/lib/printing";
+import { printDailySummary, printComanda } from "@/lib/printing";
 import {
   LogOut,
   ArrowLeft,
@@ -369,6 +369,7 @@ export default function CashManagementPage() {
         <PosModal
           shiftId={shift.id}
           branchId={selectedBranch}
+          branches={branches}
           menuData={menuData}
           categories={categories}
           onClose={() => setPosOpen(false)}
@@ -389,6 +390,7 @@ export default function CashManagementPage() {
 function PosModal({
   shiftId,
   branchId,
+  branches,
   menuData,
   categories,
   onClose,
@@ -396,6 +398,7 @@ function PosModal({
 }: {
   shiftId: number;
   branchId: string;
+  branches: Branch[];
   menuData: MenuItem[];
   categories: Category[];
   onClose: () => void;
@@ -545,6 +548,23 @@ function PosModal({
     }
 
     if (res.ok) {
+      // Imprimir comanda automáticamente
+      if (orderId) {
+        printComanda(
+          {
+            id: orderId,
+            customer_name: name,
+            order_type: orderType,
+            address: orderType === "delivery" ? deliveryAddress.trim() : null,
+            pickup_location: orderType === "retiro" ? pickupLocation : null,
+            branch_id: branchId,
+            items,
+            total: totalPrice,
+            created_at: new Date().toISOString(),
+          },
+          branches
+        );
+      }
       onSaleRegistered(data.sale);
     } else {
       setError(data.error || "No se pudo registrar la venta.");
