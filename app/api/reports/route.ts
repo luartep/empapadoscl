@@ -33,7 +33,11 @@ export async function GET(request: NextRequest) {
 
     if (from && to) {
       params.push(from, to);
-      dateFilter = `AND o.paid_at >= $1::timestamptz AND o.paid_at < $2::timestamptz + interval '1 day'`;
+      // Los rangos from/to son fechas de calendario en horario de Chile (día completo,
+      // de 00:00 a 23:59:59 hora Santiago), no UTC — para que "diario"/"semanal"/
+      // "rango personalizado" coincidan con el mismo día que ve el cajero.
+      dateFilter = `AND o.paid_at >= ($1::date)::timestamp AT TIME ZONE 'America/Santiago'
+                    AND o.paid_at < ($2::date + interval '1 day')::timestamp AT TIME ZONE 'America/Santiago'`;
     } else if (year && month) {
       params.push(year, month);
       dateFilter = `AND EXTRACT(YEAR FROM o.paid_at AT TIME ZONE 'America/Santiago') = $1
@@ -53,7 +57,7 @@ export async function GET(request: NextRequest) {
 
     if (type === "summary") {
       // ── Resumen general: total, cantidad, ticket promedio ─────────────────
-      const [totals, byBranch, byPayment, topProducts] = await Promise.all([
+      const [totals, byBranch, byPayment, byOrderType, topProducts] = await Promise.all([
         // Totales globales del período
         db.query(`
           SELECT
@@ -90,16 +94,29 @@ export async function GET(request: NextRequest) {
           ORDER BY revenue DESC
         `, params),
 
+        // Ventas por modalidad (delivery / retiro en local / mostrador)
+        db.query(`
+          SELECT
+            o.order_type,
+            COUNT(*) AS order_count,
+            COALESCE(SUM(o.total), 0) AS revenue,
+            COALESCE(AVG(o.total), 0) AS avg_ticket
+          FROM orders o
+          ${baseWhere}
+          GROUP BY o.order_type
+          ORDER BY revenue DESC
+        `, params),
+
         // Top 10 productos por ingreso
         db.query(`
           SELECT
-            item_data->>'name' AS product_name,
+            item_data->'item'->>'name' AS product_name,
             SUM((item_data->>'qty')::int) AS units_sold,
             SUM((item_data->>'unitPrice')::int * (item_data->>'qty')::int) AS revenue
           FROM orders o,
                jsonb_array_elements(o.items) AS item_data
           ${baseWhere}
-          GROUP BY item_data->>'name'
+          GROUP BY item_data->'item'->>'name'
           ORDER BY revenue DESC
           LIMIT 10
         `, params),
@@ -110,6 +127,7 @@ export async function GET(request: NextRequest) {
         totals: totals[0],
         byBranch,
         byPayment,
+        byOrderType,
         topProducts,
       });
     }
@@ -192,14 +210,14 @@ export async function GET(request: NextRequest) {
       // ── Ranking de productos ───────────────────────────────────────────────
       const rows = await db.query(`
         SELECT
-          item_data->>'name' AS product_name,
+          item_data->'item'->>'name' AS product_name,
           SUM((item_data->>'qty')::int) AS units_sold,
           SUM((item_data->>'unitPrice')::int * (item_data->>'qty')::int) AS revenue,
           COUNT(DISTINCT o.id) AS order_count
         FROM orders o,
              jsonb_array_elements(o.items) AS item_data
         ${baseWhere}
-        GROUP BY item_data->>'name'
+        GROUP BY item_data->'item'->>'name'
         ORDER BY revenue DESC
       `, params);
       return NextResponse.json({ type: "by_product", rows });

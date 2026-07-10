@@ -32,8 +32,11 @@ type SummaryData = {
   totals: { order_count: string; total_revenue: string; avg_ticket: string };
   byBranch: { branch_name: string; branch_id: string; order_count: string; revenue: string }[];
   byPayment: { payment_method: string; order_count: string; revenue: string }[];
+  byOrderType: { order_type: string; order_count: string; revenue: string; avg_ticket: string }[];
   topProducts: { product_name: string; units_sold: string; revenue: string }[];
 };
+
+type SummaryPeriod = "anual" | "mensual" | "semanal" | "diario" | "rango";
 
 type DailyRow = { day: string; order_count: string; revenue: string; cash: string; card: string; transfer: string };
 type MonthlyRow = { year: number; month: number; order_count: string; revenue: string; cash: string; card: string; transfer: string };
@@ -90,6 +93,26 @@ function pct(part: string | number, total: string | number) {
   const t = Number(total);
   if (!t) return "0%";
   return `${Math.round((Number(part) / t) * 100)}%`;
+}
+
+/** Fecha de hoy en formato YYYY-MM-DD (para <input type="date">). */
+function todayISO() {
+  const d = new Date();
+  const tz = new Date(d.toLocaleString("en-US", { timeZone: "America/Santiago" }));
+  return tz.toISOString().slice(0, 10);
+}
+
+/** Dado cualquier día de una semana, devuelve el rango lunes→domingo que la contiene. */
+function weekRangeOf(dateStr: string): { from: string; to: string } {
+  const d = new Date(dateStr + "T12:00:00");
+  const dow = d.getDay(); // 0=domingo … 6=sábado
+  const diffToMonday = dow === 0 ? -6 : 1 - dow;
+  const monday = new Date(d);
+  monday.setDate(d.getDate() + diffToMonday);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  const iso = (x: Date) => x.toISOString().slice(0, 10);
+  return { from: iso(monday), to: iso(sunday) };
 }
 
 /* ============================================================================
@@ -162,6 +185,13 @@ export default function ReportsPage() {
   const [sortField, setSortField] = useState<string>("revenue");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
+  // Selector de rango de fechas del Resumen: anual / mensual / semanal / diario / rango personalizado.
+  const [summaryPeriod, setSummaryPeriod] = useState<SummaryPeriod>("mensual");
+  const [summaryDay, setSummaryDay] = useState<string>(todayISO());
+  const [summaryWeekAnchor, setSummaryWeekAnchor] = useState<string>(todayISO());
+  const [customFrom, setCustomFrom] = useState<string>(todayISO());
+  const [customTo, setCustomTo] = useState<string>(todayISO());
+
   // Años disponibles (desde 2024 hasta año actual)
   const years = useMemo(() => {
     const arr: number[] = [];
@@ -184,10 +214,29 @@ export default function ReportsPage() {
       const params = new URLSearchParams({ type: tab });
       if (branchId) params.set("branchId", branchId);
 
-      if (tab === "daily" || tab === "by_payment") {
+      if (tab === "summary") {
+        if (summaryPeriod === "anual") {
+          params.set("year", String(year));
+        } else if (summaryPeriod === "mensual") {
+          params.set("year", String(year));
+          params.set("month", String(month));
+        } else if (summaryPeriod === "diario") {
+          params.set("from", summaryDay);
+          params.set("to", summaryDay);
+        } else if (summaryPeriod === "semanal") {
+          const { from, to } = weekRangeOf(summaryWeekAnchor);
+          params.set("from", from);
+          params.set("to", to);
+        } else if (summaryPeriod === "rango") {
+          if (!customFrom || !customTo) { setLoading(false); return; }
+          const [from, to] = customFrom <= customTo ? [customFrom, customTo] : [customTo, customFrom];
+          params.set("from", from);
+          params.set("to", to);
+        }
+      } else if (tab === "daily" || tab === "by_payment") {
         params.set("year", String(year));
         params.set("month", String(month));
-      } else if (tab === "monthly" || tab === "summary" || tab === "by_branch" || tab === "by_product" || tab === "by_order_type") {
+      } else if (tab === "monthly" || tab === "by_branch" || tab === "by_product" || tab === "by_order_type") {
         params.set("year", String(year));
       } else if (tab === "annual" || tab === "shifts") {
         // sin filtro de mes
@@ -202,7 +251,7 @@ export default function ReportsPage() {
     } finally {
       setLoading(false);
     }
-  }, [tab, branchId, year, month]);
+  }, [tab, branchId, year, month, summaryPeriod, summaryDay, summaryWeekAnchor, customFrom, customTo]);
 
   useEffect(() => {
     fetchReport();
@@ -258,7 +307,15 @@ export default function ReportsPage() {
   ];
 
   const showMonthFilter = ["daily", "by_payment"].includes(tab);
-  const showYearFilter = !["annual"].includes(tab);
+  const showYearFilter = tab !== "annual" && tab !== "summary";
+
+  const SUMMARY_PERIODS: { id: SummaryPeriod; label: string }[] = [
+    { id: "diario", label: "Diario" },
+    { id: "semanal", label: "Semanal" },
+    { id: "mensual", label: "Mensual" },
+    { id: "anual", label: "Anual" },
+    { id: "rango", label: "Rango" },
+  ];
 
   /* ---------- Render contenido ---------- */
   function renderContent() {
@@ -382,6 +439,108 @@ export default function ReportsPage() {
               ))}
             </select>
           )}
+
+          {/* Selector de período (solo Resumen) */}
+          {tab === "summary" && (
+            <>
+              <div className="flex gap-1 bg-white/5 border border-white/10 rounded-lg p-0.5">
+                {SUMMARY_PERIODS.map((p) => (
+                  <button
+                    key={p.id}
+                    onClick={() => setSummaryPeriod(p.id)}
+                    className={`px-2.5 py-1 rounded-md text-xs font-bold transition-colors ${
+                      summaryPeriod === p.id ? "bg-[#FF00C8] text-white" : "text-gray-400 hover:text-white"
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+
+              {summaryPeriod === "anual" && (
+                <select
+                  value={year}
+                  onChange={(e) => setYear(Number(e.target.value))}
+                  className="bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-[#FF00C8]"
+                >
+                  {years.map((y) => (
+                    <option key={y} value={y}>{y}</option>
+                  ))}
+                </select>
+              )}
+
+              {summaryPeriod === "mensual" && (
+                <>
+                  <select
+                    value={month}
+                    onChange={(e) => setMonth(Number(e.target.value))}
+                    className="bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-[#FF00C8]"
+                  >
+                    {MONTHS_FULL.map((m, i) => (
+                      <option key={i + 1} value={i + 1}>{m}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={year}
+                    onChange={(e) => setYear(Number(e.target.value))}
+                    className="bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-[#FF00C8]"
+                  >
+                    {years.map((y) => (
+                      <option key={y} value={y}>{y}</option>
+                    ))}
+                  </select>
+                </>
+              )}
+
+              {summaryPeriod === "diario" && (
+                <input
+                  type="date"
+                  value={summaryDay}
+                  max={todayISO()}
+                  onChange={(e) => setSummaryDay(e.target.value)}
+                  className="bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-[#FF00C8]"
+                />
+              )}
+
+              {summaryPeriod === "semanal" && (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="date"
+                    value={summaryWeekAnchor}
+                    max={todayISO()}
+                    onChange={(e) => setSummaryWeekAnchor(e.target.value)}
+                    className="bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-[#FF00C8]"
+                  />
+                  <span className="text-xs text-gray-500">
+                    {(() => {
+                      const { from, to } = weekRangeOf(summaryWeekAnchor);
+                      return `${formatDate(from + "T12:00:00")} – ${formatDate(to + "T12:00:00")}`;
+                    })()}
+                  </span>
+                </div>
+              )}
+
+              {summaryPeriod === "rango" && (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="date"
+                    value={customFrom}
+                    max={todayISO()}
+                    onChange={(e) => setCustomFrom(e.target.value)}
+                    className="bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-[#FF00C8]"
+                  />
+                  <span className="text-xs text-gray-500">a</span>
+                  <input
+                    type="date"
+                    value={customTo}
+                    max={todayISO()}
+                    onChange={(e) => setCustomTo(e.target.value)}
+                    className="bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-[#FF00C8]"
+                  />
+                </div>
+              )}
+            </>
+          )}
         </div>
       </div>
 
@@ -397,7 +556,7 @@ export default function ReportsPage() {
    Vista: Resumen
    ============================================================================ */
 function SummaryView({ data }: { data: SummaryData }) {
-  const { totals, byBranch, byPayment, topProducts } = data;
+  const { totals, byBranch, byPayment, byOrderType, topProducts } = data;
   const maxRevBranch = Math.max(...byBranch.map((b) => Number(b.revenue)), 1);
   const maxRevProduct = Math.max(...topProducts.map((p) => Number(p.revenue)), 1);
 
@@ -426,6 +585,24 @@ function SummaryView({ data }: { data: SummaryData }) {
                 </div>
               </div>
               <BarInline value={Number(b.revenue)} max={maxRevBranch} />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Por modalidad (delivery / retiro en local / mostrador) */}
+      <div className="bg-white/5 rounded-xl p-4 border border-white/10">
+        <h3 className="text-sm font-black uppercase text-[#FF00C8] mb-3 flex items-center gap-2">
+          <ShoppingBag size={14} /> Ventas por Modalidad
+        </h3>
+        <div className="space-y-2">
+          {byOrderType.map((o) => (
+            <div key={o.order_type} className="flex items-center justify-between text-sm">
+              <span className="font-semibold">{ORDER_TYPE_LABELS[o.order_type] || o.order_type}</span>
+              <div className="text-right">
+                <span className="font-black text-[#FFEA00]">{fmtCLP(o.revenue)}</span>
+                <span className="text-gray-500 text-xs ml-2">{fmt(o.order_count)} pedidos ({pct(o.revenue, totals.total_revenue)})</span>
+              </div>
             </div>
           ))}
         </div>
