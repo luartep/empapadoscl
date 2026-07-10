@@ -79,7 +79,7 @@ const formatCLP = (value: number) =>
 type OrderForPrint = {
   id: number;
   customer_name: string;
-  order_type: "delivery" | "retiro";
+  order_type: "delivery" | "retiro" | "mostrador";
   address: string | null;
   pickup_location: string | null;
   branch_id: string | null;
@@ -104,6 +104,8 @@ export function printComanda(
   const modalidad =
     order.order_type === "delivery"
       ? `DELIVERY → ${order.address ?? ""}`
+      : order.order_type === "mostrador"
+      ? `MOSTRADOR`
       : `RETIRO EN ${
           order.pickup_location === "salvador-allende"
             ? "SALVADOR ALLENDE"
