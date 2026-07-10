@@ -168,6 +168,96 @@ function BarInline({ value, max }: { value: number; max: number }) {
   );
 }
 
+/** Paleta de colores para gráficos con N categorías dinámicas (ej. sucursales, productos). */
+const CHART_PALETTE = ["#FF00C8", "#FFEA00", "#00D9FF", "#7C3AED", "#22C55E", "#F97316", "#EC4899", "#38BDF8"];
+
+/* ============================================================================
+   Gráfico de barras (series temporales: diario / mensual / anual)
+   ============================================================================ */
+function TrendBarChart({
+  data, valueFormatter = fmtCLP, maxBars = 60,
+}: {
+  data: { label: string; sublabel?: string; value: number }[];
+  valueFormatter?: (v: number) => string;
+  maxBars?: number;
+}) {
+  if (!data.length) return null;
+  const shown = data.slice(-maxBars); // más recientes al final (orden cronológico)
+  const max = Math.max(...shown.map((d) => d.value), 1);
+
+  return (
+    <div className="bg-white/5 rounded-xl border border-white/10 p-4">
+      <div className="overflow-x-auto pb-1">
+        <div className="flex items-end gap-1.5 h-40 min-w-max px-1">
+          {shown.map((d, i) => (
+            <div
+              key={i}
+              className="group relative flex flex-col items-center justify-end gap-1.5 w-7 flex-shrink-0 h-full"
+            >
+              <div
+                className="absolute -top-6 left-1/2 -translate-x-1/2 whitespace-nowrap bg-black/90 border border-white/10 rounded px-1.5 py-0.5 text-[10px] text-white opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10"
+              >
+                {valueFormatter(d.value)}
+              </div>
+              <div
+                className="w-full rounded-t bg-gradient-to-t from-[#FF00C8] to-[#FFEA00] transition-opacity group-hover:opacity-80"
+                style={{ height: `${Math.max((d.value / max) * 130, d.value > 0 ? 3 : 0)}px` }}
+              />
+              <span className="text-[9px] text-gray-500 whitespace-nowrap leading-none">{d.label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================================
+   Gráfico de dona (composición: sucursal / medio de pago / modalidad)
+   ============================================================================ */
+function DonutChart({
+  data,
+}: {
+  data: { label: string; value: number; color: string }[];
+}) {
+  const filtered = data.filter((d) => d.value > 0);
+  const total = filtered.reduce((s, d) => s + d.value, 0);
+  if (!total) return <p className="text-xs text-gray-500 py-6 text-center">Sin datos</p>;
+
+  let acc = 0;
+  const stops = filtered
+    .map((d) => {
+      const start = (acc / total) * 360;
+      acc += d.value;
+      const end = (acc / total) * 360;
+      return `${d.color} ${start}deg ${end}deg`;
+    })
+    .join(", ");
+
+  return (
+    <div className="flex items-center gap-4">
+      <div
+        className="relative w-28 h-28 rounded-full flex-shrink-0"
+        style={{ background: `conic-gradient(${stops})` }}
+      >
+        <div className="absolute inset-[10px] bg-[#121212] rounded-full flex flex-col items-center justify-center">
+          <span className="text-[9px] text-gray-500 uppercase">Total</span>
+          <span className="text-[11px] font-black text-white leading-tight">{fmtCLP(total)}</span>
+        </div>
+      </div>
+      <div className="space-y-1.5 text-xs min-w-0">
+        {filtered.map((d) => (
+          <div key={d.label} className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: d.color }} />
+            <span className="text-gray-300 truncate">{d.label}</span>
+            <span className="text-gray-500 flex-shrink-0">{Math.round((d.value / total) * 100)}%</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /* ============================================================================
    Componente principal
    ============================================================================ */
@@ -560,6 +650,26 @@ function SummaryView({ data }: { data: SummaryData }) {
   const maxRevBranch = Math.max(...byBranch.map((b) => Number(b.revenue)), 1);
   const maxRevProduct = Math.max(...topProducts.map((p) => Number(p.revenue)), 1);
 
+  const branchChartData = byBranch.map((b, i) => ({
+    label: b.branch_name || "Sin local",
+    value: Number(b.revenue),
+    color: CHART_PALETTE[i % CHART_PALETTE.length],
+  }));
+
+  const ORDER_TYPE_COLORS: Record<string, string> = { delivery: "#FF00C8", retiro: "#FFEA00", mostrador: "#00D9FF" };
+  const orderTypeChartData = byOrderType.map((o, i) => ({
+    label: ORDER_TYPE_LABELS[o.order_type] || o.order_type,
+    value: Number(o.revenue),
+    color: ORDER_TYPE_COLORS[o.order_type] || CHART_PALETTE[i % CHART_PALETTE.length],
+  }));
+
+  const PAYMENT_COLORS: Record<string, string> = { efectivo: "#22C55E", tarjeta: "#3B82F6", transferencia: "#A855F7", desconocido: "#9CA3AF" };
+  const paymentChartData = byPayment.map((p, i) => ({
+    label: PAYMENT_LABELS[p.payment_method] || p.payment_method,
+    value: Number(p.revenue),
+    color: PAYMENT_COLORS[p.payment_method] || CHART_PALETTE[i % CHART_PALETTE.length],
+  }));
+
   return (
     <div className="space-y-6">
       {/* KPIs */}
@@ -574,7 +684,8 @@ function SummaryView({ data }: { data: SummaryData }) {
         <h3 className="text-sm font-black uppercase text-[#FF00C8] mb-3 flex items-center gap-2">
           <Store size={14} /> Ventas por Local
         </h3>
-        <div className="space-y-3">
+        <DonutChart data={branchChartData} />
+        <div className="space-y-3 mt-4">
           {byBranch.map((b) => (
             <div key={b.branch_id || "sin-local"}>
               <div className="flex justify-between items-center text-sm">
@@ -595,7 +706,8 @@ function SummaryView({ data }: { data: SummaryData }) {
         <h3 className="text-sm font-black uppercase text-[#FF00C8] mb-3 flex items-center gap-2">
           <ShoppingBag size={14} /> Ventas por Modalidad
         </h3>
-        <div className="space-y-2">
+        <DonutChart data={orderTypeChartData} />
+        <div className="space-y-2 mt-4">
           {byOrderType.map((o) => (
             <div key={o.order_type} className="flex items-center justify-between text-sm">
               <span className="font-semibold">{ORDER_TYPE_LABELS[o.order_type] || o.order_type}</span>
@@ -613,7 +725,8 @@ function SummaryView({ data }: { data: SummaryData }) {
         <h3 className="text-sm font-black uppercase text-[#FF00C8] mb-3 flex items-center gap-2">
           <CreditCard size={14} /> Medios de Pago
         </h3>
-        <div className="space-y-2">
+        <DonutChart data={paymentChartData} />
+        <div className="space-y-2 mt-4">
           {byPayment.map((p) => (
             <div key={p.payment_method} className="flex items-center justify-between text-sm">
               <div className="flex items-center gap-2">
@@ -662,6 +775,10 @@ function DailyView({ rows }: { rows: DailyRow[] }) {
   if (!rows.length) return <EmptyState />;
   const total = rows.reduce((s, r) => s + Number(r.revenue), 0);
   const max = Math.max(...rows.map((r) => Number(r.revenue)), 1);
+  const chartData = [...rows].reverse().map((r) => ({
+    label: formatDate(r.day + "T12:00:00").slice(0, 5),
+    value: Number(r.revenue),
+  }));
 
   return (
     <div className="space-y-4">
@@ -669,6 +786,8 @@ function DailyView({ rows }: { rows: DailyRow[] }) {
         <StatCard label="Total del período" value={fmtCLP(total)} />
         <StatCard label="Días con ventas" value={String(rows.length)} />
       </div>
+
+      <TrendBarChart data={chartData} />
 
       <div className="bg-white/5 rounded-xl border border-white/10 overflow-hidden">
         <table className="w-full text-sm">
@@ -702,6 +821,10 @@ function MonthlyView({ rows }: { rows: MonthlyRow[] }) {
   const total = rows.reduce((s, r) => s + Number(r.revenue), 0);
   const max = Math.max(...rows.map((r) => Number(r.revenue)), 1);
   const bestMonth = rows.reduce((a, b) => Number(a.revenue) > Number(b.revenue) ? a : b, rows[0]);
+  const chartData = [...rows].reverse().map((r) => ({
+    label: MONTHS[r.month - 1],
+    value: Number(r.revenue),
+  }));
 
   return (
     <div className="space-y-4">
@@ -710,6 +833,8 @@ function MonthlyView({ rows }: { rows: MonthlyRow[] }) {
         <StatCard label="Meses con ventas" value={String(rows.length)} />
         <StatCard label="Mejor mes" value={MONTHS[bestMonth.month - 1]} sub={fmtCLP(bestMonth.revenue)} />
       </div>
+
+      <TrendBarChart data={chartData} />
 
       <div className="bg-white/5 rounded-xl border border-white/10 overflow-hidden">
         <table className="w-full text-sm">
@@ -740,9 +865,12 @@ function MonthlyView({ rows }: { rows: MonthlyRow[] }) {
    ============================================================================ */
 function AnnualView({ rows }: { rows: AnnualRow[] }) {
   if (!rows.length) return <EmptyState />;
+  const chartData = [...rows].reverse().map((r) => ({ label: String(r.year), value: Number(r.revenue) }));
 
   return (
     <div className="space-y-4">
+      <TrendBarChart data={chartData} />
+
       <div className="bg-white/5 rounded-xl border border-white/10 overflow-hidden">
         <table className="w-full text-sm">
           <TableHeader cols={["Año", "Pedidos", "Efectivo", "Tarjeta", "Transfer.", "Total"]} />
@@ -779,8 +907,21 @@ function ByBranchView({ rows }: { rows: BranchRow[] }) {
     grouped[key].total += Number(r.revenue);
   });
 
+  const chartData = Object.values(grouped).map((b, i) => ({
+    label: b.name,
+    value: b.total,
+    color: CHART_PALETTE[i % CHART_PALETTE.length],
+  }));
+
   return (
     <div className="space-y-5">
+      <div className="bg-white/5 rounded-xl p-4 border border-white/10">
+        <h3 className="text-sm font-black uppercase text-[#FF00C8] mb-3 flex items-center gap-2">
+          <Store size={14} /> Composición por Local
+        </h3>
+        <DonutChart data={chartData} />
+      </div>
+
       {Object.entries(grouped).map(([key, branch]) => (
         <div key={key} className="bg-white/5 rounded-xl border border-white/10 overflow-hidden">
           <div className="px-4 py-3 border-b border-white/10 flex justify-between items-center">
@@ -829,6 +970,8 @@ function ByProductView({
   const maxRev = Math.max(...sorted.map((r) => Number(r.revenue)), 1);
   const totalRev = sorted.reduce((s, r) => s + Number(r.revenue), 0);
   const totalUnits = sorted.reduce((s, r) => s + Number(r.units_sold), 0);
+  const top10ByRevenue = [...rows].sort((a, b) => Number(b.revenue) - Number(a.revenue)).slice(0, 10);
+  const maxTop10 = Math.max(...top10ByRevenue.map((r) => Number(r.revenue)), 1);
 
   function SortIcon({ field }: { field: string }) {
     if (sortField !== field) return <ArrowUpDown size={10} className="text-gray-600" />;
@@ -841,6 +984,26 @@ function ByProductView({
         <StatCard label="Productos distintos" value={String(sorted.length)} />
         <StatCard label="Unidades vendidas" value={fmt(totalUnits)} />
         <StatCard label="Ingresos por productos" value={fmtCLP(totalRev)} />
+      </div>
+
+      <div className="bg-white/5 rounded-xl p-4 border border-white/10">
+        <h3 className="text-sm font-black uppercase text-[#FF00C8] mb-3 flex items-center gap-2">
+          <Package size={14} /> Top 10 por Ingresos
+        </h3>
+        <div className="space-y-2.5">
+          {top10ByRevenue.map((r) => (
+            <div key={r.product_name} className="flex items-center gap-2">
+              <span className="text-xs text-gray-400 w-32 flex-shrink-0 truncate">{r.product_name}</span>
+              <div className="flex-1 bg-white/5 rounded h-4 relative overflow-hidden">
+                <div
+                  className="h-full rounded bg-gradient-to-r from-[#FF00C8] to-[#FFEA00]"
+                  style={{ width: `${Math.max((Number(r.revenue) / maxTop10) * 100, 2)}%` }}
+                />
+              </div>
+              <span className="text-xs font-bold text-[#FFEA00] w-20 flex-shrink-0 text-right">{fmtCLP(r.revenue)}</span>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="bg-white/5 rounded-xl border border-white/10 overflow-hidden">
@@ -907,8 +1070,22 @@ function ByPaymentView({ rows }: { rows: unknown[] }) {
     desconocido: "text-gray-400",
   };
 
+  const PAYMENT_HEX: Record<string, string> = { efectivo: "#22C55E", tarjeta: "#3B82F6", transferencia: "#A855F7", desconocido: "#9CA3AF" };
+  const chartData = Object.entries(methods).map(([method, m]) => ({
+    label: PAYMENT_LABELS[method] || method,
+    value: m.total,
+    color: PAYMENT_HEX[method] || "#9CA3AF",
+  }));
+
   return (
     <div className="space-y-5">
+      <div className="bg-white/5 rounded-xl p-4 border border-white/10">
+        <h3 className="text-sm font-black uppercase text-[#FF00C8] mb-3 flex items-center gap-2">
+          <CreditCard size={14} /> Composición del Período
+        </h3>
+        <DonutChart data={chartData} />
+      </div>
+
       {Object.entries(methods).map(([method, data]) => (
         <div key={method} className="bg-white/5 rounded-xl border border-white/10 overflow-hidden">
           <div className="px-4 py-3 border-b border-white/10 flex justify-between items-center">
@@ -939,9 +1116,22 @@ function ByPaymentView({ rows }: { rows: unknown[] }) {
 function ByOrderTypeView({ rows }: { rows: OrderTypeRow[] }) {
   if (!rows.length) return <EmptyState />;
   const total = rows.reduce((s, r) => s + Number(r.revenue), 0);
+  const ORDER_TYPE_HEX: Record<string, string> = { delivery: "#FF00C8", retiro: "#FFEA00", mostrador: "#00D9FF" };
+  const chartData = rows.map((r, i) => ({
+    label: ORDER_TYPE_LABELS[r.order_type] || r.order_type,
+    value: Number(r.revenue),
+    color: ORDER_TYPE_HEX[r.order_type] || CHART_PALETTE[i % CHART_PALETTE.length],
+  }));
 
   return (
     <div className="space-y-4">
+      <div className="bg-white/5 rounded-xl p-4 border border-white/10">
+        <h3 className="text-sm font-black uppercase text-[#FF00C8] mb-3 flex items-center gap-2">
+          <ShoppingBag size={14} /> Composición del Período
+        </h3>
+        <DonutChart data={chartData} />
+      </div>
+
       <div className="grid grid-cols-1 gap-3">
         {rows.map((r) => (
           <div key={r.order_type} className="bg-white/5 rounded-xl p-4 border border-white/10">
