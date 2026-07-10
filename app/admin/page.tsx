@@ -49,7 +49,7 @@ type Category = { id: string; label: string };
 type Order = {
   id: number;
   customer_name: string;
-  order_type: "delivery" | "retiro";
+  order_type: "delivery" | "retiro" | "mostrador";
   address: string | null;
   pickup_location: string | null;
   branch_id: string | null;
@@ -65,6 +65,7 @@ type Order = {
   prep_status: "en_preparacion" | "en_reparto" | "entregado";
   payment_status: "pendiente" | "pagado";
   payment_method: "efectivo" | "tarjeta" | "transferencia" | null;
+  cash_sale_id: number | null;
   created_at: string;
 };
 
@@ -896,6 +897,11 @@ function OrdersTab() {
             >
               <div className="flex items-start justify-between gap-3 mb-3">
                 <div>
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <span className="text-[10px] font-black uppercase text-[#FF00C8] tracking-wider">
+                      Pedido #{order.id}
+                    </span>
+                  </div>
                   <p className="font-bold text-sm">{order.customer_name}</p>
                   <p className="text-xs text-gray-500">
                     {new Date(order.created_at).toLocaleString("es-CL")}
@@ -948,8 +954,10 @@ function OrdersTab() {
 
               <p className="text-xs text-gray-400 mb-2">
                 {order.order_type === "delivery"
-                  ? `Delivery → ${order.address}`
-                  : `Retiro en ${
+                  ? `🛵 Delivery → ${order.address}`
+                  : order.order_type === "mostrador"
+                  ? `🏪 Mostrador`
+                  : `📍 Retiro en ${
                       order.pickup_location === "salvador-allende"
                         ? "Salvador Allende"
                         : "Lagunillas"

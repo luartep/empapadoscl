@@ -412,6 +412,12 @@ function PosModal({
   const [searchQuery, setSearchQuery] = useState("");
   const [view, setView] = useState<"menu" | "cart">("menu");
 
+  // Datos del pedido
+  const [customerName, setCustomerName] = useState("");
+  const [orderType, setOrderType] = useState<"mostrador" | "retiro" | "delivery">("mostrador");
+  const [deliveryAddress, setDeliveryAddress] = useState("");
+  const [pickupLocation, setPickupLocation] = useState(branchId);
+
   const totalItems = useMemo(() => cart.reduce((s, l) => s + l.qty, 0), [cart]);
   const totalPrice = useMemo(
     () => cart.reduce((s, l) => s + l.qty * l.unitPrice, 0),
@@ -465,19 +471,51 @@ function PosModal({
 
   const handleSubmit = async () => {
     if (cart.length === 0 || totalPrice === 0) return;
+    const name = customerName.trim();
+    if (!name) {
+      setError("Ingresa el nombre del cliente antes de cobrar.");
+      setView("cart");
+      return;
+    }
+    if (orderType === "delivery" && !deliveryAddress.trim()) {
+      setError("Ingresa la dirección de delivery.");
+      setView("cart");
+      return;
+    }
     setSubmitting(true);
     setError(null);
 
-    // Construir descripción legible
-    const desc = cart
-      .map((l) => {
-        const mods = l.selections.length
-          ? ` (${l.selections.map((s) => s.optionName).join(", ")})`
-          : "";
-        return `${l.qty}x ${l.item.name}${mods}`;
-      })
-      .join(" | ");
+    // 1. Crear el pedido real en orders (aparece en panel Pedidos)
+    const items = cart.map((l) => ({
+      item: { name: l.item.name, id: l.item.id },
+      qty: l.qty,
+      unitPrice: l.unitPrice,
+      selections: l.selections,
+      note: l.note,
+    }));
 
+    const orderRes = await fetch("/api/orders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        customerName: name,
+        orderType,
+        address: orderType === "delivery" ? deliveryAddress.trim() : null,
+        pickupLocation: orderType === "retiro" ? pickupLocation : null,
+        items,
+        total: totalPrice,
+        branchId,
+      }),
+    });
+    const orderData = await orderRes.json();
+    const orderId: number | null = orderData.id ?? null;
+
+    // Construir descripción legible para la venta en caja
+    const desc = orderId
+      ? `Pedido #${orderId} — ${name}`
+      : `Venta mostrador — ${name}`;
+
+    // 2. Registrar la venta en el turno de caja
     const res = await fetch("/api/manual-sales", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -490,6 +528,22 @@ function PosModal({
       }),
     });
     const data = await res.json();
+
+    // 3. Si se creó el pedido y la venta, marcar el pedido como pagado
+    // usando el endpoint de patch sin markPaid (para no duplicar la venta),
+    // actualizando directamente los campos de pago mediante una ruta interna.
+    if (res.ok && orderId) {
+      await fetch("/api/orders/mark-paid-from-pos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderId,
+          paymentMethod,
+          cashSaleId: data.sale?.id ?? null,
+        }),
+      }).catch(() => {}); // no bloqueamos si esto falla
+    }
+
     if (res.ok) {
       onSaleRegistered(data.sale);
     } else {
@@ -628,7 +682,7 @@ function PosModal({
         </>
       ) : (
         /* ---- Vista carrito ---- */
-        <div className="flex-1 overflow-y-auto px-4 py-4 pb-36">
+        <div className="flex-1 overflow-y-auto px-4 py-4 pb-72">
           {cart.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-center">
               <ShoppingCart size={36} className="text-gray-700 mb-3" />
@@ -711,8 +765,10 @@ function PosModal({
       {/* Footer fijo — totales + pago */}
       {cart.length > 0 && (
         <div className="fixed bottom-0 left-0 right-0 z-10 bg-[#0A0A0A]/95 backdrop-blur-md border-t border-white/10 px-4 py-4">
-          <div className="max-w-3xl mx-auto">
-            <div className="flex items-center justify-between mb-3">
+          <div className="max-w-3xl mx-auto space-y-3">
+
+            {/* Total */}
+            <div className="flex items-center justify-between">
               <span className="text-xs text-gray-400 font-bold uppercase">
                 Total ({totalItems} producto{totalItems !== 1 ? "s" : ""})
               </span>
@@ -720,7 +776,61 @@ function PosModal({
                 ${formatCLP(totalPrice)}
               </span>
             </div>
-            <div className="flex gap-2 mb-3">
+
+            {/* Datos del pedido */}
+            <div className="space-y-2">
+              {/* Nombre del cliente */}
+              <input
+                type="text"
+                value={customerName}
+                onChange={(e) => setCustomerName(e.target.value)}
+                placeholder="Nombre del cliente *"
+                className="w-full bg-[#161616] border border-white/10 rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-[#FF00C8] placeholder-gray-600"
+              />
+
+              {/* Tipo de pedido */}
+              <div className="flex gap-2">
+                {(["mostrador", "retiro", "delivery"] as const).map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => setOrderType(t)}
+                    className={`flex-1 py-2 rounded-xl text-[11px] font-bold uppercase transition-colors ${
+                      orderType === t
+                        ? "bg-white/15 text-white border border-white/30"
+                        : "bg-white/5 text-gray-500 border border-transparent"
+                    }`}
+                  >
+                    {t === "mostrador" ? "🏪 Mostrador" : t === "retiro" ? "📍 Retiro" : "🛵 Delivery"}
+                  </button>
+                ))}
+              </div>
+
+              {/* Retiro: selección de sucursal */}
+              {orderType === "retiro" && (
+                <select
+                  value={pickupLocation}
+                  onChange={(e) => setPickupLocation(e.target.value)}
+                  className="w-full bg-[#161616] border border-white/10 rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-[#FF00C8] text-gray-300"
+                >
+                  <option value="lagunillas">Retiro en Lagunillas</option>
+                  <option value="salvador-allende">Retiro en Salvador Allende</option>
+                </select>
+              )}
+
+              {/* Delivery: dirección */}
+              {orderType === "delivery" && (
+                <input
+                  type="text"
+                  value={deliveryAddress}
+                  onChange={(e) => setDeliveryAddress(e.target.value)}
+                  placeholder="Dirección de delivery *"
+                  className="w-full bg-[#161616] border border-white/10 rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-[#FF00C8] placeholder-gray-600"
+                />
+              )}
+            </div>
+
+            {/* Método de pago */}
+            <div className="flex gap-2">
               {PAYMENT_METHODS.map((m) => (
                 <button
                   key={m.id}
@@ -735,9 +845,11 @@ function PosModal({
                 </button>
               ))}
             </div>
+
             {error && (
-              <p className="text-[#FF8A00] text-xs mb-2 text-center">{error}</p>
+              <p className="text-[#FF8A00] text-xs text-center">{error}</p>
             )}
+
             <button
               onClick={handleSubmit}
               disabled={submitting}

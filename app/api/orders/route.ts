@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { getSessionFromCookies } from "@/lib/auth";
 
-// POST /api/orders — público. Se llama justo antes de abrir el link de
-// WhatsApp, para que el pedido quede guardado en el panel aunque el
-// cliente no termine de enviarlo por WhatsApp.
+// POST /api/orders — público (clientes WhatsApp) y protegido (venta en caja).
+// Se llama justo antes de abrir el link de WhatsApp, para que el pedido quede
+// guardado en el panel aunque el cliente no termine de enviarlo por WhatsApp.
+// También se usa desde el POS de caja para crear pedidos de mostrador.
 export async function POST(request: NextRequest) {
   const body = await request.json();
   const {
@@ -14,6 +15,7 @@ export async function POST(request: NextRequest) {
     pickupLocation = null,
     items,
     total,
+    branchId: explicitBranchId,
   } = body;
 
   if (!customerName || !orderType || !items || total == null) {
@@ -23,10 +25,16 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Si el pedido se retira en una sucursal específica, lo pre-asignamos
-  // directamente a esa sucursal. Si es delivery, queda sin asignar hasta
-  // que el admin lo asigne manualmente desde el panel.
-  const branchId = orderType === "retiro" ? pickupLocation : null;
+  // Lógica de asignación de sucursal:
+  // - mostrador: se pasa explícitamente la sucursal desde el POS
+  // - retiro: se usa pickupLocation
+  // - delivery: queda sin asignar hasta que el admin lo asigne desde el panel
+  let branchId: string | null = null;
+  if (explicitBranchId) {
+    branchId = explicitBranchId;
+  } else if (orderType === "retiro") {
+    branchId = pickupLocation;
+  }
 
   try {
     const db = sql();
@@ -48,8 +56,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true, id });
   } catch (err) {
     console.error(err);
-    // No bloqueamos el flujo de WhatsApp si falla el guardado: el pedido
-    // sigue funcionando para el cliente aunque no quede en el panel.
     return NextResponse.json(
       { error: "No se pudo guardar el pedido en el panel." },
       { status: 500 }
