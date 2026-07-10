@@ -233,3 +233,34 @@ Accede desde el botón **Reportes** en el header del panel de administración. E
 - **Turnos:** historial de arqueos de caja cerrados con diferencia contado vs. esperado.
 
 Todos los reportes se pueden filtrar por **local** y **año/mes** con los selectores del header. Casi todos permiten exportar a **CSV** con el botón de descarga (arriba a la derecha).
+
+---
+
+## Migración 6 — Inventario por sucursal
+
+Para habilitar el módulo de inventario, corre **una migración más**:
+
+1. Abre el SQL Editor de tu base de datos (Neon).
+2. Pega el contenido completo de `db/schema_v6.sql` y ejecútalo.
+
+Esto crea dos tablas nuevas (`inventory_items` e `inventory_movements`) y carga automáticamente 8 insumos típicos en **ambas** sucursales, con stock en 0 (edítalos desde el panel para cargar el stock real):
+
+- Pan de Completo, Pan de Sándwich, Pan de Hamburguesa
+- Salchichas
+- Papas, Carne, Pollo
+- Envases Box
+
+No modifica ni borra nada de lo que ya tenías.
+
+### Cómo usar el inventario (`/admin/inventory`)
+
+Accede desde el botón **Inventario** en el header del panel. Cada sucursal tiene su propio stock, independiente de la otra:
+
+- **Nuevo Insumo:** agrega un insumo con nombre, unidad (unidad, kg, g, l, ml, paquete, caja), stock inicial y stock mínimo.
+- **Entrada / Salida:** suma o resta stock (ej. llegó un pedido del proveedor, o se usó en preparación). Queda guardado en el historial con fecha y nota opcional.
+- **Ajuste:** define el stock exacto tras un conteo físico, en vez de sumar/restar.
+- **Historial:** ícono de reloj en cada insumo, muestra los últimos 50 movimientos con fecha, tipo y nota.
+- **Alerta de stock bajo:** el insumo se marca en naranja (con ícono de advertencia) cuando el stock cae al mínimo configurado o menos.
+- **Editar / Eliminar:** el ícono de lápiz permite cambiar nombre, unidad, mínimo y notas; el de basurero elimina el insumo junto con su historial (acción permanente).
+
+Cambiar la cantidad **siempre** se hace por Entrada/Salida/Ajuste (no editando el insumo directamente), para que quede registro de cada movimiento.
