@@ -3,9 +3,6 @@ import { sql } from "@/lib/db";
 import { getSessionFromCookies } from "@/lib/auth";
 
 // POST /api/orders — público (clientes WhatsApp) y protegido (venta en caja).
-// Se llama justo antes de abrir el link de WhatsApp, para que el pedido quede
-// guardado en el panel aunque el cliente no termine de enviarlo por WhatsApp.
-// También se usa desde el POS de caja para crear pedidos de mostrador.
 export async function POST(request: NextRequest) {
   const body = await request.json();
   const {
@@ -25,10 +22,6 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Lógica de asignación de sucursal:
-  // - mostrador: se pasa explícitamente la sucursal desde el POS
-  // - retiro: se usa pickupLocation
-  // - delivery: queda sin asignar hasta que el admin lo asigne desde el panel
   let branchId: string | null = null;
   if (explicitBranchId) {
     branchId = explicitBranchId;
@@ -63,8 +56,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// GET /api/orders — protegido. Lista los pedidos para el panel.
-// Acepta ?branchId= para filtrar por sucursal (admin viendo una sola sucursal).
+// GET /api/orders — protegido.
 export async function GET(request: NextRequest) {
   if (!(await getSessionFromCookies())) {
     return NextResponse.json({ error: "No autorizado." }, { status: 401 });
@@ -90,21 +82,17 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// PATCH /api/orders — protegido. Actualiza cualquier combinación de:
-//   - prepStatus: 'en_preparacion' | 'en_reparto' | 'entregado'
-//   - branchId: reasigna la sucursal
-//   - markPaid: { paymentMethod: 'efectivo'|'tarjeta'|'transferencia' }
-//       → marca el pedido como pagado y registra automáticamente la venta
-//         en el turno de caja abierto de su sucursal.
-//   - unmarkPaid: true → revierte el pago (y borra la venta de caja asociada,
-//       si la hubiera, para no dejar un monto fantasma en el arqueo).
+// PATCH /api/orders — protegido. Soporta:
+//   - prepStatus, branchId, markPaid, unmarkPaid, status (legado)
+//   - acceptOrder: true → marca el pedido como aceptado
+//   - cancelOrder: { reason: string } → cancela el pedido con motivo (no lo elimina)
 export async function PATCH(request: NextRequest) {
   if (!(await getSessionFromCookies())) {
     return NextResponse.json({ error: "No autorizado." }, { status: 401 });
   }
 
   const body = await request.json();
-  const { id, prepStatus, branchId, markPaid, unmarkPaid, status } = body;
+  const { id, prepStatus, branchId, markPaid, unmarkPaid, status, acceptOrder, cancelOrder } = body;
 
   if (!id) {
     return NextResponse.json({ error: "Falta el id." }, { status: 400 });
@@ -113,41 +101,60 @@ export async function PATCH(request: NextRequest) {
   try {
     const db = sql();
 
-    // --- Compatibilidad con el campo viejo "status" (pendiente/completado) ---
+    // --- Compatibilidad con campo viejo "status" ---
     if (status != null && prepStatus == null) {
-      await db.query(`UPDATE orders SET status = $2 WHERE id = $1`, [
-        id,
-        status,
-      ]);
+      await db.query(`UPDATE orders SET status = $2 WHERE id = $1`, [id, status]);
     }
 
     if (prepStatus != null) {
-      await db.query(`UPDATE orders SET prep_status = $2 WHERE id = $1`, [
-        id,
-        prepStatus,
-      ]);
+      await db.query(`UPDATE orders SET prep_status = $2 WHERE id = $1`, [id, prepStatus]);
     }
 
     if (branchId !== undefined) {
-      await db.query(`UPDATE orders SET branch_id = $2 WHERE id = $1`, [
-        id,
-        branchId,
-      ]);
+      await db.query(`UPDATE orders SET branch_id = $2 WHERE id = $1`, [id, branchId]);
     }
 
-    // --- Marcar como pagado: crea la venta en caja automáticamente ---
+    // --- Aceptar pedido ---
+    if (acceptOrder) {
+      await db.query(`UPDATE orders SET accepted = true WHERE id = $1`, [id]);
+    }
+
+    // --- Cancelar pedido (soft delete: queda en BD con status='cancelado') ---
+    if (cancelOrder) {
+      const { reason } = cancelOrder;
+      if (!reason || !reason.trim()) {
+        return NextResponse.json({ error: "Falta el motivo de cancelación." }, { status: 400 });
+      }
+      // Si tenía venta de caja, la revertimos también
+      const orderRows = await db.query(
+        `SELECT cash_sale_id, payment_status FROM orders WHERE id = $1`,
+        [id]
+      );
+      const order = orderRows[0] as { cash_sale_id: number | null; payment_status: string } | undefined;
+      if (order?.cash_sale_id) {
+        await db.query(`DELETE FROM manual_sales WHERE id = $1`, [order.cash_sale_id]);
+      }
+      await db.query(
+        `UPDATE orders SET
+          status = 'cancelado',
+          cancel_reason = $2,
+          payment_status = 'pendiente',
+          payment_method = NULL,
+          paid_at = NULL,
+          cash_sale_id = NULL
+         WHERE id = $1`,
+        [id, reason.trim()]
+      );
+    }
+
+    // --- Marcar como pagado ---
     if (markPaid) {
       const { paymentMethod } = markPaid;
       if (!paymentMethod) {
-        return NextResponse.json(
-          { error: "Falta el medio de pago." },
-          { status: 400 }
-        );
+        return NextResponse.json({ error: "Falta el medio de pago." }, { status: 400 });
       }
 
-      const orderRows = await db.query(`SELECT * FROM orders WHERE id = $1`, [
-        id,
-      ]);
+      const orderRows = await db.query(`SELECT * FROM orders WHERE id = $1`, [id]);
       const order = orderRows[0] as
         | {
             id: number;
@@ -156,14 +163,15 @@ export async function PATCH(request: NextRequest) {
             customer_name: string;
             payment_status: string;
             cash_sale_id: number | null;
+            status: string;
           }
         | undefined;
 
       if (!order) {
-        return NextResponse.json(
-          { error: "Pedido no encontrado." },
-          { status: 404 }
-        );
+        return NextResponse.json({ error: "Pedido no encontrado." }, { status: 404 });
+      }
+      if (order.status === "cancelado") {
+        return NextResponse.json({ error: "No se puede cobrar un pedido cancelado." }, { status: 400 });
       }
       if (!order.branch_id) {
         return NextResponse.json(
@@ -175,7 +183,6 @@ export async function PATCH(request: NextRequest) {
         );
       }
 
-      // Busca el turno abierto de esa sucursal.
       const shiftRows = await db.query(
         `SELECT id FROM cash_shifts WHERE branch_id = $1 AND status = 'abierto'`,
         [order.branch_id]
@@ -192,12 +199,8 @@ export async function PATCH(request: NextRequest) {
         );
       }
 
-      // Si ya estaba pagado con una venta asociada, la eliminamos primero
-      // para no duplicar (ej. si se cambia de "tarjeta" a "efectivo").
       if (order.cash_sale_id) {
-        await db.query(`DELETE FROM manual_sales WHERE id = $1`, [
-          order.cash_sale_id,
-        ]);
+        await db.query(`DELETE FROM manual_sales WHERE id = $1`, [order.cash_sale_id]);
       }
 
       const saleResult = await db.query(
@@ -232,9 +235,7 @@ export async function PATCH(request: NextRequest) {
       );
       const order = orderRows[0] as { cash_sale_id: number | null } | undefined;
       if (order?.cash_sale_id) {
-        await db.query(`DELETE FROM manual_sales WHERE id = $1`, [
-          order.cash_sale_id,
-        ]);
+        await db.query(`DELETE FROM manual_sales WHERE id = $1`, [order.cash_sale_id]);
       }
       await db.query(
         `UPDATE orders SET payment_status = 'pendiente', payment_method = NULL, paid_at = NULL, cash_sale_id = NULL WHERE id = $1`,
@@ -253,8 +254,6 @@ export async function PATCH(request: NextRequest) {
 }
 
 // DELETE /api/orders?id=... — protegido. Elimina un pedido permanentemente.
-// Si el pedido tenía una venta de caja asociada (estaba pagado), también
-// elimina esa venta para no dejar un monto fantasma en el arqueo.
 export async function DELETE(request: NextRequest) {
   if (!(await getSessionFromCookies())) {
     return NextResponse.json({ error: "No autorizado." }, { status: 401 });
@@ -276,9 +275,7 @@ export async function DELETE(request: NextRequest) {
     );
     const order = orderRows[0] as { cash_sale_id: number | null } | undefined;
     if (order?.cash_sale_id) {
-      await db.query(`DELETE FROM manual_sales WHERE id = $1`, [
-        order.cash_sale_id,
-      ]);
+      await db.query(`DELETE FROM manual_sales WHERE id = $1`, [order.cash_sale_id]);
     }
     await db.query(`DELETE FROM orders WHERE id = $1`, [id]);
     return NextResponse.json({ ok: true });

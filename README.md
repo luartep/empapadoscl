@@ -176,3 +176,33 @@ Ambos abren una ventana nueva y llaman a imprimir automáticamente; usa la impre
 ### Corrección de zoom en celular
 
 Se fijó el viewport de la página (`width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no`) para que no se pueda hacer zoom ni con gestos ni automáticamente al tocar un campo de texto — la página se ve "tal cual carga", sin que el usuario pueda desajustar el zoom por accidente.
+
+---
+
+## Migración 4 — Aceptar y cancelar pedidos
+
+Para habilitar los botones de Aceptar/Cancelar en el panel de pedidos, corre **una migración más**:
+
+1. Abre el SQL Editor de tu base de datos (Neon).
+2. Pega el contenido completo de `db/schema_v4.sql` y ejecútalo.
+
+Esto agrega dos columnas a la tabla `orders`:
+- `accepted` (boolean): indica si el pedido fue aceptado por cocina.
+- `cancel_reason` (text): guarda el motivo de cancelación cuando `status = 'cancelado'`.
+
+Los pedidos existentes no se ven afectados (quedan con `accepted = false` y sin motivo de cancelación).
+
+### Cómo funcionan los nuevos botones
+
+**Aceptar pedido:**
+- Aparece en cada tarjeta de pedido activo (no cancelado).
+- Al hacer click, el pedido muestra un badge verde "Aceptado". Sirve para confirmarle al cliente (por WhatsApp u otro medio) que su pedido fue recibido y está en marcha.
+- Una vez aceptado, el botón queda desactivado (no se puede "desaceptar" accidentalmente).
+
+**Cancelar pedido:**
+- Al hacer click aparece un popup con 6 causas rápidas: Sin stock, Cliente no contesta, Dirección fuera de zona, Pedido duplicado, Cierre anticipado, Otro motivo.
+- Siempre hay un cuadro de texto para agregar un detalle adicional (obligatorio si se elige "Otro motivo").
+- El pedido **no se elimina**: queda guardado en la base de datos con `status = 'cancelado'` y el motivo registrado.
+- Los pedidos cancelados se pueden ver en el filtro "Cancelados" del panel. Aparecen con fondo rojizo, badge "Cancelado", y el total tachado.
+- Si el pedido tenía un pago registrado, se revierte automáticamente (se quita la venta de caja).
+- Solo se puede eliminar un pedido cancelado haciendo click en el ícono de basura (eliminación permanente).
