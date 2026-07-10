@@ -134,3 +134,32 @@ CREATE INDEX IF NOT EXISTS idx_orders_payment_status ON orders(payment_status);
 -- ============================================================================
 -- FIN — Ahora ejecuta seed.sql por separado para cargar los productos.
 -- ============================================================================
+
+
+-- ================================
+-- 4. ACEPTAR / CANCELAR PEDIDOS (schema_v4.sql)
+-- ================================
+
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS accepted BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS cancel_reason TEXT;
+CREATE INDEX IF NOT EXISTS idx_orders_status_cancel ON orders(status) WHERE status = 'cancelado';
+
+-- ================================
+-- 5. ÍNDICES PARA REPORTES (schema_v5.sql)
+-- ================================
+
+CREATE INDEX IF NOT EXISTS idx_orders_paid_at
+  ON orders(paid_at DESC)
+  WHERE payment_status = 'pagado';
+
+CREATE INDEX IF NOT EXISTS idx_orders_branch_paid
+  ON orders(branch_id, paid_at DESC)
+  WHERE payment_status = 'pagado';
+
+CREATE INDEX IF NOT EXISTS idx_orders_payment_method
+  ON orders(payment_method)
+  WHERE payment_status = 'pagado';
+
+CREATE INDEX IF NOT EXISTS idx_cash_shifts_closed
+  ON cash_shifts(branch_id, opened_at DESC)
+  WHERE status = 'cerrado';

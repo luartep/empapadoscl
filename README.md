@@ -206,3 +206,30 @@ Los pedidos existentes no se ven afectados (quedan con `accepted = false` y sin 
 - Los pedidos cancelados se pueden ver en el filtro "Cancelados" del panel. Aparecen con fondo rojizo, badge "Cancelado", y el total tachado.
 - Si el pedido tenía un pago registrado, se revierte automáticamente (se quita la venta de caja).
 - Solo se puede eliminar un pedido cancelado haciendo click en el ícono de basura (eliminación permanente).
+
+---
+
+## Migración 5 — Reportes y estadísticas
+
+Para habilitar el módulo de reportes, corre **una migración más**:
+
+1. Abre el SQL Editor de tu base de datos (Neon).
+2. Pega el contenido completo de `db/schema_v5.sql` y ejecútalo.
+
+Esto solo crea índices en la tabla `orders` y `cash_shifts` para acelerar las consultas del panel de reportes. No modifica ni elimina ningún dato.
+
+### Cómo usar los reportes (`/admin/reports`)
+
+Accede desde el botón **Reportes** en el header del panel de administración. El módulo incluye:
+
+- **Resumen:** KPIs del período (ventas totales, cantidad de pedidos, ticket promedio), desglose por local, por medio de pago, y top 10 productos.
+- **Diario:** ventas día a día con desglose por efectivo, tarjeta y transferencia.
+- **Mensual:** ventas mes a mes dentro del año seleccionado.
+- **Anual:** histórico año a año desde 2024.
+- **Por Local:** desglose mensual de ventas por cada sucursal.
+- **Productos:** ranking completo de todos los productos vendidos, ordenable por unidades, pedidos o ingresos.
+- **Pagos:** detalle diario por medio de pago (efectivo, tarjeta, transferencia).
+- **Modalidad:** comparativa entre delivery, retiro en local y mostrador.
+- **Turnos:** historial de arqueos de caja cerrados con diferencia contado vs. esperado.
+
+Todos los reportes se pueden filtrar por **local** y **año/mes** con los selectores del header. Casi todos permiten exportar a **CSV** con el botón de descarga (arriba a la derecha).
