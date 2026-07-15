@@ -14,59 +14,82 @@
 
 const RECEIPT_CSS = `
   @page { size: 80mm auto; margin: 0; }
-  * { box-sizing: border-box; }
+  * { box-sizing: border-box; font-weight: bold !important; }
   body {
     width: 80mm;
     margin: 0;
     padding: 4mm;
     font-family: 'Courier New', monospace;
-    font-size: 12px;
+    font-size: 48px;
+    font-weight: bold;
     color: #000;
     background: #fff;
   }
   .center { text-align: center; }
   .right { text-align: right; }
   .bold { font-weight: bold; }
-  .line { border-top: 1px dashed #000; margin: 6px 0; }
+  .line { border-top: 2px dashed #000; margin: 12px 0; }
   .row { display: flex; justify-content: space-between; gap: 8px; }
-  .title { font-size: 16px; font-weight: bold; }
-  .small { font-size: 10px; }
+  .title { font-size: 64px; font-weight: bold; }
+  .small { font-size: 40px; font-weight: bold; }
   .item-name { font-weight: bold; }
-  .item-detail { font-size: 10px; padding-left: 8px; color: #333; }
+  .item-detail { font-size: 40px; padding-left: 8px; color: #000; font-weight: bold; }
   table { width: 100%; border-collapse: collapse; }
-  td { padding: 2px 0; vertical-align: top; }
+  td { padding: 4px 0; vertical-align: top; font-weight: bold; }
 `;
 
 function openPrintWindow(bodyHtml: string, title: string) {
-  const win = window.open("", "_blank", "width=400,height=600");
-  if (!win) {
-    alert(
-      "No se pudo abrir la ventana de impresión. Verifica que tu navegador no esté bloqueando popups para este sitio."
-    );
+  // Eliminar iframe anterior si existe
+  const existing = document.getElementById("__print_frame__");
+  if (existing) existing.remove();
+
+  const iframe = document.createElement("iframe");
+  iframe.id = "__print_frame__";
+  iframe.style.cssText =
+    "position:fixed;top:-9999px;left:-9999px;width:0;height:0;border:0;visibility:hidden;";
+  document.body.appendChild(iframe);
+
+  const doc = iframe.contentDocument || iframe.contentWindow?.document;
+  if (!doc) {
+    alert("No se pudo inicializar la impresión. Intenta de nuevo.");
     return;
   }
-  win.document.write(`
-    <!DOCTYPE html>
-    <html lang="es">
-      <head>
-        <meta charset="utf-8" />
-        <title>${title}</title>
-        <style>${RECEIPT_CSS}</style>
-      </head>
-      <body>
-        ${bodyHtml}
-        <script>
-          window.onload = function() {
-            window.print();
-            // Cierra la ventana automáticamente después de imprimir/cancelar,
-            // para no dejar pestañas sueltas acumulándose.
-            setTimeout(function() { window.close(); }, 300);
-          };
-        </script>
-      </body>
-    </html>
-  `);
-  win.document.close();
+
+  doc.open();
+  doc.write(`<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <title>${title}</title>
+    <style>${RECEIPT_CSS}</style>
+  </head>
+  <body>
+    ${bodyHtml}
+  </body>
+</html>`);
+  doc.close();
+
+  // Esperar a que el iframe cargue antes de imprimir
+  const printAndClean = () => {
+    try {
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
+    } catch {
+      // fallback: ventana nueva si el iframe falla (ej. Safari estricto)
+      const win = window.open("", "_blank", "width=400,height=600");
+      if (win) {
+        win.document.write(`<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"/><title>${title}</title><style>${RECEIPT_CSS}</style></head><body>${bodyHtml}<script>window.onload=function(){window.print();setTimeout(function(){window.close();},500);};<\/script></body></html>`);
+        win.document.close();
+      }
+    }
+    setTimeout(() => iframe.remove(), 2000);
+  };
+
+  if (iframe.contentDocument?.readyState === "complete") {
+    printAndClean();
+  } else {
+    iframe.onload = printAndClean;
+  }
 }
 
 const formatCLP = (value: number) =>

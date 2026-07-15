@@ -13,7 +13,6 @@ import {
   Package,
   ClipboardList,
   Wallet,
-  Boxes,
   BarChart2,
   Loader2,
   Printer,
@@ -153,12 +152,6 @@ export default function AdminPanelPage() {
             className="flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-bold uppercase bg-white/5 text-gray-400 hover:text-white transition-colors"
           >
             <Wallet size={14} /> Caja
-          </button>
-          <button
-            onClick={() => router.push("/admin/inventory")}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-bold uppercase bg-white/5 text-gray-400 hover:text-white transition-colors"
-          >
-            <Boxes size={14} /> Inventario
           </button>
           <button
             onClick={() => router.push("/admin/reports")}
@@ -879,6 +872,8 @@ function OrdersTab() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: order.id, acceptOrder: true }),
     });
+    // Imprimir comanda automáticamente al aceptar el pedido
+    printComanda(order, branches);
   };
 
   const cancelOrder = async (order: Order, reason: string) => {
