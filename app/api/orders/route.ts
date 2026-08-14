@@ -46,6 +46,104 @@ export async function POST(request: NextRequest) {
       ]
     );
     const id = (result[0] as { id: number }).id;
+
+    // ── Descontar inventario según receta ──────────────────────────────────
+    // Solo si hay una sucursal definida y hay items en el pedido.
+    if (branchId && Array.isArray(items) && items.length > 0) {
+      try {
+        // Recopilar product_ids del pedido (cada item tiene item.id o item.productId)
+        const productIds: string[] = items
+          .map((i: { item?: { id?: string }; productId?: string }) =>
+            i?.item?.id ?? i?.productId ?? null
+          )
+          .filter(Boolean) as string[];
+
+        if (productIds.length > 0) {
+          // Traer todas las recetas de los productos del pedido
+          const recipes = (await db.query(
+            `SELECT pr.product_id, pr.item_name, pr.quantity
+             FROM product_recipes pr
+             WHERE pr.product_id = ANY($1::text[])`,
+            [productIds]
+          )) as { product_id: string; item_name: string; quantity: string }[];
+
+          if (recipes.length > 0) {
+            // Acumular consumos totales por nombre de insumo
+            // (multiplicado por la cantidad de ese producto en el pedido)
+            const consumo: Record<string, number> = {};
+
+            for (const orderItem of items as {
+              item?: { id?: string };
+              productId?: string;
+              qty?: number;
+              quantity?: number;
+            }[]) {
+              const pid = orderItem?.item?.id ?? orderItem?.productId;
+              const qty = Number(orderItem?.qty ?? orderItem?.quantity ?? 1);
+              if (!pid) continue;
+
+              for (const recipe of recipes.filter(
+                (r) => r.product_id === pid
+              )) {
+                const key = recipe.item_name;
+                consumo[key] = (consumo[key] ?? 0) + Number(recipe.quantity) * qty;
+              }
+            }
+
+            // Descontar cada insumo en el inventario de la sucursal
+            for (const [itemName, totalQty] of Object.entries(consumo)) {
+              try {
+                // Buscar el insumo en la sucursal por nombre
+                const itemRows = (await db.query(
+                  `SELECT id, quantity FROM inventory_items
+                   WHERE branch_id = $1 AND name = $2 AND active = true
+                   LIMIT 1`,
+                  [branchId, itemName]
+                )) as { id: number; quantity: string }[];
+
+                if (itemRows.length === 0) continue; // insumo no existe en esta sucursal → saltar
+
+                const invItem = itemRows[0];
+                const currentQty = Number(invItem.quantity);
+                const newQty = Math.max(0, currentQty - totalQty); // no baja de 0
+
+                await db.query(
+                  `UPDATE inventory_items
+                   SET quantity = $2, updated_at = now()
+                   WHERE id = $1`,
+                  [invItem.id, newQty]
+                );
+
+                // Registrar el movimiento en el historial
+                await db.query(
+                  `INSERT INTO inventory_movements
+                     (item_id, branch_id, type, quantity, resulting_quantity, note)
+                   VALUES ($1, $2, 'salida', $3, $4, $5)`,
+                  [
+                    invItem.id,
+                    branchId,
+                    totalQty,
+                    newQty,
+                    `Pedido #${id} (automático)`,
+                  ]
+                );
+              } catch (innerErr) {
+                // No interrumpir el pedido si falla el descuento de un insumo
+                console.error(
+                  `[inventory] Error descontando "${itemName}":`,
+                  innerErr
+                );
+              }
+            }
+          }
+        }
+      } catch (invErr) {
+        // El pedido ya fue guardado; no revertir por un error de inventario
+        console.error("[inventory] Error al procesar recetas:", invErr);
+      }
+    }
+    // ── Fin descuento inventario ───────────────────────────────────────────
+
     return NextResponse.json({ ok: true, id });
   } catch (err) {
     console.error(err);

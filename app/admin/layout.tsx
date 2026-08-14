@@ -8,7 +8,8 @@ const NAV = [
   { href: '/admin/cocina',      label: 'Cocina',       icon: '👨‍🍳' },
   { href: '/admin/dashboard',   label: 'Dashboard',    icon: '📊' },
   { href: '/admin/catalogo',    label: 'Catálogo',     icon: '🍔' },
-  { href: '/admin/inventario',  label: 'Inventario',   icon: '📦' },
+  { href: '/admin/inventory',   label: 'Inventario',   icon: '📦' },
+  { href: '/admin/recipes',     label: 'Recetas',      icon: '📝' },
   { href: '/admin/descuentos',  label: 'Descuentos',   icon: '🏷️' },
   { href: '/admin/reportes',    label: 'Reportes',     icon: '📋' },
 ]
